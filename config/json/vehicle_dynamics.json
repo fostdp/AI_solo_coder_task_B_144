@@ -1,0 +1,12 @@
+{
+    "mass": 800.0,
+    "cg_height": 0.8,
+    "cg_longitudinal": 0.0,
+    "cg_lateral": 0.0,
+    "roll_center_height": 0.3,
+    "yaw_inertia": 1200.0,
+    "roll_stiffness": 30000.0,
+    "damping_ratio": 0.3,
+    "cornering_stiffness_front": 25000.0,
+    "cornering_stiffness_rear": 35000.0
+}
