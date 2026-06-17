@@ -1,0 +1,283 @@
+version: '3.8'
+
+x-python-env: &python-env
+  TZ: ${TZ:-Asia/Shanghai}
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  INFLUXDB_HOST: ${INFLUXDB_HOST:-influxdb}
+  INFLUXDB_PORT: ${INFLUXDB_PORT:-8086}
+  INFLUXDB_ORG: ${INFLUXDB_ORG:-chariot-research}
+  INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-chariot_data}
+  INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-chariot_influx_secret_token_2024}
+  MQTT_HOST: ${MQTT_HOST:-mosquitto}
+  MQTT_PORT: ${MQTT_PORT:-1883}
+  MQTT_TOPIC_ALERT: ${MQTT_TOPIC_ALERT:-chariot/alerts}
+  MQTT_TOPIC_DATA: ${MQTT_TOPIC_DATA:-chariot/data}
+  GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+  GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+  GUNICORN_LOGLEVEL: ${GUNICORN_LOGLEVEL:-info}
+
+x-python-base: &python-base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.python
+  restart: unless-stopped
+  environment:
+    <<: *python-env
+  depends_on:
+    - redis
+    - influxdb
+    - mosquitto
+  networks:
+    - chariot-net
+  volumes:
+    - ./docker/gunicorn_conf.py:/app/gunicorn_conf.py:ro
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: chariot-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:-chariot_redis_secret_2024}
+    volumes:
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - chariot-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-chariot_redis_secret_2024}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: chariot-influxdb
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD:-chariot_admin_2024}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-chariot-research}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-chariot_data}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-chariot_influx_secret_token_2024}
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+      - ./docker/init-influxdb.sh:/docker-entrypoint-initdb.d/init-influxdb.sh:ro
+    ports:
+      - "${INFLUXDB_PORT:-8086}:8086"
+    networks:
+      - chariot-net
+    healthcheck:
+      test: ["CMD", "influx", "ping", "-t", "${INFLUXDB_TOKEN:-chariot_influx_secret_token_2024}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0-openssl
+    container_name: chariot-mosquitto
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      - "9001:9001"
+    networks:
+      - chariot-net
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/broker/version' -C 1 -W 3 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  dtu-receiver:
+    <<: *python-base
+    container_name: chariot-dtu-receiver
+    environment:
+      <<: *python-env
+      SERVICE_NAME: dtu_receiver
+      SERVICE_PORT: ${DTU_RECEIVER_PORT:-8001}
+    ports:
+      - "${DTU_RECEIVER_PORT:-8001}:${DTU_RECEIVER_PORT:-8001}"
+    command: >
+      sh -c "cd /app/services/dtu_receiver &&
+             gunicorn main:app
+             -c /app/gunicorn_conf.py
+             --bind 0.0.0.0:${DTU_RECEIVER_PORT:-8001}
+             --workers ${GUNICORN_WORKERS:-2}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${DTU_RECEIVER_PORT:-8001}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  steering-simulator:
+    <<: *python-base
+    container_name: chariot-steering-simulator
+    environment:
+      <<: *python-env
+      SERVICE_NAME: steering_simulator
+      SERVICE_PORT: ${STEERING_SIMULATOR_PORT:-8002}
+    ports:
+      - "${STEERING_SIMULATOR_PORT:-8002}:${STEERING_SIMULATOR_PORT:-8002}"
+    command: >
+      sh -c "cd /app/services/steering_simulator &&
+             gunicorn main:app
+             -c /app/gunicorn_conf.py
+             --bind 0.0.0.0:${STEERING_SIMULATOR_PORT:-8002}
+             --workers ${GUNICORN_WORKERS:-2}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${STEERING_SIMULATOR_PORT:-8002}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  stability-analyzer:
+    <<: *python-base
+    container_name: chariot-stability-analyzer
+    environment:
+      <<: *python-env
+      SERVICE_NAME: stability_analyzer
+      SERVICE_PORT: ${STABILITY_ANALYZER_PORT:-8003}
+    ports:
+      - "${STABILITY_ANALYZER_PORT:-8003}:${STABILITY_ANALYZER_PORT:-8003}"
+    command: >
+      sh -c "cd /app/services/stability_analyzer &&
+             gunicorn main:app
+             -c /app/gunicorn_conf.py
+             --bind 0.0.0.0:${STABILITY_ANALYZER_PORT:-8003}
+             --workers ${GUNICORN_WORKERS:-2}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${STABILITY_ANALYZER_PORT:-8003}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  alarm-mqtt:
+    <<: *python-base
+    container_name: chariot-alarm-mqtt
+    environment:
+      <<: *python-env
+      SERVICE_NAME: alarm_mqtt
+      SERVICE_PORT: ${ALARM_MQTT_PORT:-8004}
+    ports:
+      - "${ALARM_MQTT_PORT:-8004}:${ALARM_MQTT_PORT:-8004}"
+    command: >
+      sh -c "cd /app/services/alarm_mqtt &&
+             gunicorn main:app
+             -c /app/gunicorn_conf.py
+             --bind 0.0.0.0:${ALARM_MQTT_PORT:-8004}
+             --workers ${GUNICORN_WORKERS:-2}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${ALARM_MQTT_PORT:-8004}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  api-gateway:
+    <<: *python-base
+    container_name: chariot-api-gateway
+    environment:
+      <<: *python-env
+      SERVICE_NAME: api_gateway
+      SERVICE_PORT: ${API_GATEWAY_PORT:-8000}
+    ports:
+      - "${API_GATEWAY_PORT:-8000}:${API_GATEWAY_PORT:-8000}"
+    command: >
+      sh -c "cd /app/services/api_gateway &&
+             gunicorn main:app
+             -c /app/gunicorn_conf.py
+             --bind 0.0.0.0:${API_GATEWAY_PORT:-8000}
+             --workers ${GUNICORN_WORKERS:-2}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${API_GATEWAY_PORT:-8000}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  sensor-simulator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    container_name: chariot-sensor-simulator
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SIMULATOR_INTERVAL: ${SIMULATOR_INTERVAL:-60}
+      SIMULATOR_VEHICLE_COUNT: ${SIMULATOR_VEHICLE_COUNT:-3}
+      SIMULATOR_TURNING_RADIUS_MIN: ${SIMULATOR_TURNING_RADIUS_MIN:-5.0}
+      SIMULATOR_TURNING_RADIUS_MAX: ${SIMULATOR_TURNING_RADIUS_MAX:-50.0}
+      SIMULATOR_FRICTION_MIN: ${SIMULATOR_FRICTION_MIN:-0.2}
+      SIMULATOR_FRICTION_MAX: ${SIMULATOR_FRICTION_MAX:-0.9}
+    volumes:
+      - ./scripts:/app/scripts:ro
+    depends_on:
+      - api-gateway
+    networks:
+      - chariot-net
+    command: >
+      sh -c "cd /app &&
+             python scripts/sensor_simulator_enhanced.py
+             --api-host api-gateway
+             --api-port ${API_GATEWAY_PORT:-8000}
+             --interval ${SIMULATOR_INTERVAL:-60}
+             --vehicles ${SIMULATOR_VEHICLE_COUNT:-3}
+             --scenario ancient_road"
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: chariot-nginx
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - chariot-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  redis-data:
+  influxdb-data:
+  influxdb-config:
+  mosquitto-data:
+  mosquitto-log:
+
+networks:
+  chariot-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
