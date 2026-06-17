@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>古代双辕车转向机构仿真与操控稳定性分析系统 v2.0</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="chariot_3d.js"></script>
+    <script src="steering_panel.js"></script>
+</head>
+<body>
+    <div class="app-container" id="app">
+        <header class="app-header">
+            <h1>🏇 古代双辕车转向机构仿真与操控稳定性分析系统 <span class="version-badge">v2.0 微服务架构</span></h1>
+            <div class="header-info">
+                <span class="status-indicator" id="connectionStatus">
+                    <span class="w-3 h-3 bg-red-500 rounded-full inline-block mr-2"></span>连接中...
+                </span>
+                <select id="vehicleSelect">
+                    <option value="chariot-001">双辕车 001</option>
+                    <option value="chariot-002">双辕车 002</option>
+                    <option value="chariot-003">双辕车 003</option>
+                </select>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="left-panel">
+                <div class="panel-section">
+                    <h3>三维视图 <span class="subtitle">Three.js + GPU实例化</span></h3>
+                    <div class="view-tabs">
+                        <button class="view-btn active" data-view="default">默认</button>
+                        <button class="view-btn" data-view="front">前视</button>
+                        <button class="view-btn" data-view="side">侧视</button>
+                        <button class="view-btn" data-view="top">俯视</button>
+                        <button id="clearTrajectories" class="ml-auto">清除轨迹</button>
+                        <button id="fetchHistory">历史数据</button>
+                    </div>
+                    <div id="canvasContainer" class="canvas-container"></div>
+                    <div class="canvas-controls">
+                        <label class="control-group">
+                            <span>辕杆转角</span>
+                            <input type="range" id="manualPoleSlider" min="-45" max="45" value="0" step="0.5">
+                            <span id="manualPoleValue">0.0°</span>
+                        </label>
+                        <label class="control-group">
+                            <span>车速</span>
+                            <input type="range" id="manualSpeedSlider" min="1" max="15" value="5" step="0.5">
+                            <span id="manualSpeedValue">5.0 m/s</span>
+                        </label>
+                        <label class="control-group manual-toggle">
+                            <input type="checkbox" id="manualModeToggle">
+                            <span>手动分析模式</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>转向机构示意图 <span class="subtitle">四杆运动学</span></h3>
+                    <canvas id="linkageCanvas" width="500" height="280"></canvas>
+                </div>
+
+                <div class="panel-section">
+                    <h3>系统参数 <span class="subtitle">JSON配置</span></h3>
+                    <div class="params-grid">
+                        <div class="param-item"><span>轴距</span><strong id="sysWheelbase">—</strong></div>
+                        <div class="param-item"><span>轮距</span><strong id="sysTrackWidth">—</strong></div>
+                        <div class="param-item"><span>轮径</span><strong id="sysWheelRadius">—</strong></div>
+                        <div class="param-item"><span>辕长</span><strong id="sysPoleLength">—</strong></div>
+                        <div class="param-item"><span>总质量</span><strong id="sysMass">—</strong></div>
+                        <div class="param-item"><span>重心高</span><strong id="sysCgHeight">—</strong></div>
+                        <div class="param-item"><span>偏航惯量</span><strong id="sysYawInertia">—</strong></div>
+                        <div class="param-item"><span>告警计数</span><strong id="alertBadge" class="text-red-600">0</strong></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="panel-section">
+                    <h3>实时传感器数据</h3>
+                    <div class="sensor-grid">
+                        <div class="sensor-card">
+                            <div class="sensor-label">辕杆转角</div>
+                            <div class="sensor-value" id="poleAngle">0.0°</div>
+                        </div>
+                        <div class="sensor-card">
+                            <div class="sensor-label">车轮滑移率</div>
+                            <div class="sensor-value" id="slipRate">0.10</div>
+                        </div>
+                        <div class="sensor-card">
+                            <div class="sensor-label">车身侧倾角</div>
+                            <div class="sensor-value" id="rollAngle">0.0°</div>
+                        </div>
+                        <div class="sensor-card">
+                            <div class="sensor-label">路面摩擦系数</div>
+                            <div class="sensor-value" id="frictionCoeff">0.70</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>转向分析 <span class="subtitle">四杆机构 + 阿克曼</span></h3>
+                    <div class="analysis-grid">
+                        <div class="analysis-item">
+                            <span class="analysis-label">转向半径</span>
+                            <span class="analysis-value" id="turningRadius">∞ m</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">内侧轮转角</span>
+                            <span class="analysis-value" id="innerWheelAngle">0.00°</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">外侧轮转角</span>
+                            <span class="analysis-value" id="outerWheelAngle">0.00°</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">轮速差</span>
+                            <span class="analysis-value" id="wheelSpeedDiff">0.00%</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">内传动角</span>
+                            <span class="analysis-value" id="transmissionAngleInner">0.0°</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">外传动角</span>
+                            <span class="analysis-value" id="transmissionAngleOuter">0.0°</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">连杆干涉</span>
+                            <span class="analysis-value" id="linkageInterference">否</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">死点风险</span>
+                            <span class="analysis-value" id="deadPointRisk">否</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>货物配置 <span class="subtitle">变重心动力学</span></h3>
+                    <div class="cargo-grid">
+                        <div class="cargo-item">
+                            <label>货物质量 (kg)</label>
+                            <input type="number" id="cargoMass" value="0" min="0" max="500" step="10">
+                        </div>
+                        <div class="cargo-item">
+                            <label>横向偏移 (m)</label>
+                            <input type="number" id="cargoOffsetX" value="0" step="0.01" min="-0.3" max="0.3">
+                        </div>
+                        <div class="cargo-item">
+                            <label>纵向偏移 (m)</label>
+                            <input type="number" id="cargoOffsetY" value="0" step="0.01" min="-0.5" max="0.5">
+                        </div>
+                        <div class="cargo-item">
+                            <label>高度偏移 (m)</label>
+                            <input type="number" id="cargoOffsetZ" value="0" step="0.01" min="0" max="1.0">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>稳定性分析 <span class="subtitle">变重心动力学</span></h3>
+                    <div class="analysis-grid">
+                        <div class="analysis-item">
+                            <span class="analysis-label">横摆角速度</span>
+                            <span class="analysis-value" id="yawRate">0.00°/s</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">侧向加速度</span>
+                            <span class="analysis-value" id="lateralAccel">0.00g</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">侧倾中心高度</span>
+                            <span class="analysis-value" id="rollCenter">0.000 m</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">稳定性指数</span>
+                            <span class="analysis-value" id="stabilityIndex">1.000</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">有效重心高</span>
+                            <span class="analysis-value" id="effectiveCgHeight">0.000 m</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">有效重心横移</span>
+                            <span class="analysis-value" id="effectiveCgLateral">0.00 cm</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">有效偏航惯量</span>
+                            <span class="analysis-value" id="effectiveYawInertia">0 kg·m²</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="analysis-label">货物动态横移</span>
+                            <span class="analysis-value" id="cargoShiftLateral">0.000 cm</span>
+                        </div>
+                    </div>
+                    <div class="rollover-risk-container">
+                        <div class="rollover-risk-label">侧翻风险</div>
+                        <div class="rollover-risk-value" id="rolloverRisk">0.0%</div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>告警记录 <span class="subtitle" id="alertsHeader">MQTT 推送</span></h3>
+                    <div class="alerts-list" id="alertList">
+                        <div class="no-alerts">暂无告警</div>
+                    </div>
+                </div>
+
+                <div class="panel-section" id="historyContent">
+                    <h3>历史数据</h3>
+                    <div class="text-gray-500 text-sm">点击"历史数据"按钮加载</div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="app-footer">
+            <span>© 2024 交通史研究团队 · 秦汉双辕车复原研究 · 微服务架构版</span>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const chariot3d = new Chariot3D('canvasContainer');
+            const panel = new SteeringPanel('app', chariot3d);
+        });
+    </script>
+</body>
+</html>
