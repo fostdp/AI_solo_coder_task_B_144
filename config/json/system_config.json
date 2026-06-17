@@ -1,0 +1,39 @@
+{
+    "redis": {
+        "host": "${REDIS_HOST:-localhost}",
+        "port": "${REDIS_PORT:-6379}",
+        "db": 0,
+        "password": "${REDIS_PASSWORD:-}"
+    },
+    "influxdb": {
+        "url": "http://${INFLUXDB_HOST:-localhost}:${INFLUXDB_PORT:-8086}",
+        "token": "${INFLUXDB_TOKEN:-my-token}",
+        "org": "${INFLUXDB_ORG:-transport-history}",
+        "bucket": "${INFLUXDB_BUCKET:-chariot-sensors}"
+    },
+    "mqtt": {
+        "broker": "${MQTT_HOST:-localhost}",
+        "port": "${MQTT_PORT:-1883}",
+        "topic_alert": "${MQTT_TOPIC_ALERT:-chariot/alerts}",
+        "topic_data": "${MQTT_TOPIC_DATA:-chariot/data}"
+    },
+    "fastapi": {
+        "host": "0.0.0.0",
+        "port": 8000
+    },
+    "redis_channels": {
+        "sensor_data_raw": "chariot:raw:sensor",
+        "sensor_data_validated": "chariot:validated:sensor",
+        "steering_result": "chariot:result:steering",
+        "stability_result": "chariot:result:stability",
+        "alerts": "chariot:alerts",
+        "api_request": {
+            "steering": "chariot:api:steering",
+            "stability": "chariot:api:stability"
+        },
+        "api_response": {
+            "steering": "chariot:api:steering:resp",
+            "stability": "chariot:api:stability:resp"
+        }
+    }
+}
