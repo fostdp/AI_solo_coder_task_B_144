@@ -1,0 +1,10 @@
+{
+    "wheelbase": 2.5,
+    "track_width": 1.8,
+    "wheel_radius": 0.35,
+    "pole_length": 1.8,
+    "kingpin_offset": 0.1,
+    "steering_arm_length": 0.25,
+    "tie_rod_length": -1.0,
+    "ackermann_angle_deg": 12.0
+}
