@@ -1,0 +1,8 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+influxdb-client==1.37.0
+paho-mqtt==1.6.1
+numpy==1.26.2
+pydantic==2.5.2
+python-multipart==0.0.6
+websockets==12.0
