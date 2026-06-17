@@ -1,0 +1,21 @@
+{
+    "roll_angle": {
+        "threshold": 20.0,
+        "critical_factor": 1.3,
+        "severity_normal": "warning",
+        "severity_critical": "critical"
+    },
+    "slip_rate_high": {
+        "threshold": 0.8,
+        "severity": "warning"
+    },
+    "slip_rate_low": {
+        "threshold": 0.05,
+        "severity": "info"
+    },
+    "low_friction": {
+        "threshold": 0.3,
+        "severity": "warning"
+    },
+    "cooldown_seconds": 300
+}
