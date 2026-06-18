@@ -1,0 +1,90 @@
+{
+    "asphalt_dry": {
+        "name": "干燥柏油路",
+        "category": "现代铺装",
+        "description": "现代城市干燥沥青路面",
+        "friction_min": 0.7,
+        "friction_max": 0.9,
+        "slip_factor": 0.8,
+        "rolling_resistance": 0.012,
+        "bump_amplitude_m": 0.005,
+        "irregularity": 0.0
+    },
+    "stone_pavement": {
+        "name": "古代石板路",
+        "category": "古代铺装",
+        "description": "古代城市石板铺砌道路，接缝明显，表面平整但有颠簸",
+        "friction_min": 0.55,
+        "friction_max": 0.75,
+        "slip_factor": 1.2,
+        "rolling_resistance": 0.03,
+        "bump_amplitude_m": 0.02,
+        "irregularity": 0.3
+    },
+    "dirt_road": {
+        "name": "古代土路",
+        "category": "古代非铺装",
+        "description": "干燥压实的古代土路，表面有车辙和扬尘",
+        "friction_min": 0.5,
+        "friction_max": 0.7,
+        "slip_factor": 1.5,
+        "rolling_resistance": 0.05,
+        "bump_amplitude_m": 0.04,
+        "irregularity": 0.6
+    },
+    "mud_road": {
+        "name": "泥泞路",
+        "category": "古代非铺装",
+        "description": "雨后泥泞道路，深陷车辙，附着力极差",
+        "friction_min": 0.2,
+        "friction_max": 0.4,
+        "slip_factor": 2.5,
+        "rolling_resistance": 0.15,
+        "bump_amplitude_m": 0.06,
+        "irregularity": 0.9
+    },
+    "gravel_road": {
+        "name": "碎石路",
+        "category": "非铺装",
+        "description": "碎石铺撒的道路，颗粒松散",
+        "friction_min": 0.5,
+        "friction_max": 0.7,
+        "slip_factor": 1.8,
+        "rolling_resistance": 0.06,
+        "bump_amplitude_m": 0.035,
+        "irregularity": 0.7
+    },
+    "sand_road": {
+        "name": "沙土路",
+        "category": "非铺装",
+        "description": "松软沙土路面，车轮易陷",
+        "friction_min": 0.3,
+        "friction_max": 0.5,
+        "slip_factor": 2.2,
+        "rolling_resistance": 0.12,
+        "bump_amplitude_m": 0.02,
+        "irregularity": 0.5
+    },
+    "ice_snow": {
+        "name": "冰雪路",
+        "category": "特殊",
+        "description": "结冰或积雪路面，摩擦系数极低",
+        "friction_min": 0.1,
+        "friction_max": 0.25,
+        "slip_factor": 3.0,
+        "rolling_resistance": 0.02,
+        "bump_amplitude_m": 0.01,
+        "irregularity": 0.2
+    },
+    "ancient_post_road": {
+        "name": "古代驿道",
+        "category": "古代铺装",
+        "description": "秦汉时期官方驿道，夯实土路加局部石板，典型复原路况",
+        "friction_min": 0.35,
+        "friction_max": 0.55,
+        "slip_factor": 1.6,
+        "rolling_resistance": 0.055,
+        "bump_amplitude_m": 0.03,
+        "irregularity": 0.55
+    }
+}

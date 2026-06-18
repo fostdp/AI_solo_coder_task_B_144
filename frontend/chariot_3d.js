@@ -139,38 +139,7 @@ class Chariot3D {
     _buildChariot() {
         this.chariotGroup = new THREE.Group();
         this.scene.add(this.chariotGroup);
-
-        const floorGeo = new THREE.BoxGeometry(CHARIOT_WHEELBASE * 0.8, 0.08, CHARIOT_TRACK_WIDTH);
-        const woodMat = this.getSharedMaterial('wood', () =>
-            new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.7, metalness: 0.1 })
-        );
-        const floor = new THREE.Mesh(floorGeo, woodMat);
-        floor.position.y = WHEEL_RADIUS + 0.04;
-        floor.castShadow = true;
-        floor.receiveShadow = true;
-        this.chariotGroup.add(floor);
-
-        const bodyMat = this.getSharedMaterial('body', () =>
-            new THREE.MeshStandardMaterial({ color: 0xa0522d, roughness: 0.6, metalness: 0.1 })
-        );
-        const bodyFront = new THREE.Mesh(
-            new THREE.BoxGeometry(0.05, 0.5, CHARIOT_TRACK_WIDTH), bodyMat
-        );
-        bodyFront.position.set(CHARIOT_WHEELBASE * 0.3, WHEEL_RADIUS + 0.33, 0);
-        bodyFront.castShadow = true;
-        this.chariotGroup.add(bodyFront);
-
-        const bodyBack = new THREE.Mesh(
-            new THREE.BoxGeometry(0.05, 0.6, CHARIOT_TRACK_WIDTH), bodyMat
-        );
-        bodyBack.position.set(-CHARIOT_WHEELBASE * 0.4, WHEEL_RADIUS + 0.38, 0);
-        bodyBack.castShadow = true;
-        this.chariotGroup.add(bodyBack);
-
-        this._buildRailing();
-        this._buildFrontWheels();
-        this._buildRearWheels();
-        this._buildPole();
+        this._buildStandardChariot();
         this._buildLinkage();
     }
 
@@ -530,6 +499,306 @@ class Chariot3D {
         this.innerTrajectoryPoints = [];
         this._updateTrajectoryLine(this.trajectoryLine, []);
         this._updateTrajectoryLine(this.innerTrajectoryLine, []);
+    }
+
+    switchVehicleType(vehicleType) {
+        if (!this.chariotGroup) return;
+        while (this.chariotGroup.children.length > 0) {
+            this.chariotGroup.remove(this.chariotGroup.children[0]);
+        }
+        this.wheelGroups = {};
+
+        if (vehicleType === 'wheelbarrow_single') {
+            this._buildWheelbarrow();
+        } else if (vehicleType === 'chariot_four_wheel') {
+            this._buildFourWheelChariot();
+        } else if (vehicleType === 'modern_car') {
+            this._buildModernCar();
+        } else {
+            this._buildStandardChariot();
+        }
+        this._buildLinkage();
+    }
+
+    _buildStandardChariot() {
+        this._buildWheels(CHARIOT_WHEELBASE, CHARIOT_TRACK_WIDTH, WHEEL_RADIUS, false);
+        this._buildChassis(CHARIOT_WHEELBASE, CHARIOT_TRACK_WIDTH, WHEEL_RADIUS);
+        this._buildPole(CHARIOT_WHEELBASE, POLE_LENGTH, WHEEL_RADIUS);
+    }
+
+    _buildWheelbarrow() {
+        const L = 1.2;
+        const T = 0.1;
+        const R = 0.4;
+
+        this.wheelGroups.singleWheel = this._buildOneWheel(0, R, 0, R);
+        this.chariotGroup.add(this.wheelGroups.singleWheel);
+        this.leftKingpin = this.wheelGroups.singleWheel;
+        this.rightKingpin = this.wheelGroups.singleWheel;
+
+        const woodMat = this.getSharedMaterial('wood', () =>
+            new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.7, metalness: 0.1 })
+        );
+
+        const floorGeo = new THREE.BoxGeometry(L, 0.08, 0.6);
+        const floor = new THREE.Mesh(floorGeo, woodMat);
+        floor.position.set(-L * 0.1, R + 0.04, 0);
+        floor.castShadow = true;
+        floor.receiveShadow = true;
+        this.chariotGroup.add(floor);
+        this._materialCache.set('body', woodMat);
+
+        const poleGeo = new THREE.CylinderGeometry(0.03, 0.04, 2.2, 10);
+        const pole = new THREE.Mesh(poleGeo, woodMat);
+        pole.rotation.z = Math.PI / 2;
+        pole.position.set(-L * 0.5 - 0.6, R + 0.04, 0);
+        pole.castShadow = true;
+        this.chariotGroup.add(pole);
+
+        this.poleGroup = new THREE.Group();
+        this.poleGroup.position.set(0, R, 0);
+        this.chariotGroup.add(this.poleGroup);
+    }
+
+    _buildFourWheelChariot() {
+        const L = 3.2;
+        const T = 2.0;
+        const R = 0.4;
+        const PL = 2.5;
+
+        this._buildWheels(L, T, R, true);
+        this._buildChassis(L, T, R);
+        this._buildPole(L, PL, R);
+    }
+
+    _buildModernCar() {
+        const L = 2.7;
+        const T = 1.55;
+        const R = 0.33;
+
+        this._buildWheels(L, T, R, false);
+
+        const carBodyMat = this.getSharedMaterial('modernBody', () =>
+            new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.3, metalness: 0.7 })
+        );
+        this._materialCache.set('body', carBodyMat);
+
+        const floorGeo = new THREE.BoxGeometry(L * 0.9, 0.1, T * 0.95);
+        const floor = new THREE.Mesh(floorGeo, carBodyMat);
+        floor.position.y = R + 0.05;
+        floor.castShadow = true;
+        floor.receiveShadow = true;
+        this.chariotGroup.add(floor);
+
+        const cabinGeo = new THREE.BoxGeometry(L * 0.5, 0.6, T * 0.85);
+        const cabin = new THREE.Mesh(cabinGeo, carBodyMat);
+        cabin.position.set(-L * 0.1, R + 0.1 + 0.3, 0);
+        cabin.castShadow = true;
+        this.chariotGroup.add(cabin);
+
+        const hoodGeo = new THREE.BoxGeometry(L * 0.25, 0.15, T * 0.85);
+        const hood = new THREE.Mesh(hoodGeo, carBodyMat);
+        hood.position.set(L * 0.33, R + 0.12, 0);
+        hood.castShadow = true;
+        this.chariotGroup.add(hood);
+
+        const trunkGeo = new THREE.BoxGeometry(L * 0.15, 0.2, T * 0.85);
+        const trunk = new THREE.Mesh(trunkGeo, carBodyMat);
+        trunk.position.set(-L * 0.38, R + 0.15, 0);
+        trunk.castShadow = true;
+        this.chariotGroup.add(trunk);
+
+        this.poleGroup = new THREE.Group();
+        this.poleGroup.position.set(L * 0.4, R, 0);
+        this.chariotGroup.add(this.poleGroup);
+    }
+
+    _buildWheels(wheelbase, trackWidth, wheelRadius, fourWheel) {
+        const positions = [
+            ['frontLeft', wheelbase * 0.4, wheelRadius, trackWidth / 2],
+            ['frontRight', wheelbase * 0.4, wheelRadius, -trackWidth / 2],
+            ['rearLeft', -wheelbase * 0.4, wheelRadius, trackWidth / 2],
+            ['rearRight', -wheelbase * 0.4, wheelRadius, -trackWidth / 2]
+        ];
+
+        if (fourWheel) {
+            const extended = wheelbase * 0.6;
+            positions[0] = ['frontLeft', extended, wheelRadius, trackWidth / 2];
+            positions[1] = ['frontRight', extended, wheelRadius, -trackWidth / 2];
+            positions[2] = ['rearLeft', -extended, wheelRadius, trackWidth / 2];
+            positions[3] = ['rearRight', -extended, wheelRadius, -trackWidth / 2];
+        }
+
+        positions.forEach(([name, x, y, z]) => {
+            this.wheelGroups[name] = this._buildOneWheel(x, y, z, wheelRadius);
+            this.chariotGroup.add(this.wheelGroups[name]);
+        });
+
+        this.leftKingpin = new THREE.Group();
+        this.leftKingpin.position.set(wheelbase * 0.4, wheelRadius, trackWidth / 2);
+        if (this.wheelGroups.frontLeft) {
+            this.leftKingpin.attach(this.wheelGroups.frontLeft);
+            this.wheelGroups.frontLeft.position.set(0, 0, 0);
+        }
+        this.chariotGroup.add(this.leftKingpin);
+
+        this.rightKingpin = new THREE.Group();
+        this.rightKingpin.position.set(wheelbase * 0.4, wheelRadius, -trackWidth / 2);
+        if (this.wheelGroups.frontRight) {
+            this.rightKingpin.attach(this.wheelGroups.frontRight);
+            this.wheelGroups.frontRight.position.set(0, 0, 0);
+        }
+        this.chariotGroup.add(this.rightKingpin);
+    }
+
+    _buildOneWheel(x, y, z, wheelRadius) {
+        const group = new THREE.Group();
+        group.position.set(x, y, z);
+        group.userData.spinAngle = 0;
+
+        const tireMat = this.getSharedMaterial('tire', () =>
+            new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9, metalness: 0.0 })
+        );
+        const rimMat = this.getSharedMaterial('rim', () =>
+            new THREE.MeshStandardMaterial({ color: 0x8b7355, roughness: 0.6, metalness: 0.2 })
+        );
+        const spokeMat = this.getSharedMaterial('spoke', () =>
+            new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.7, metalness: 0.1 })
+        );
+
+        const tireGeo = this.getSharedGeometry('tire_' + wheelRadius, () =>
+            new THREE.TorusGeometry(wheelRadius, wheelRadius * 0.15, 10, 24)
+        );
+        const tire = new THREE.Mesh(tireGeo, tireMat);
+        tire.rotation.y = Math.PI / 2;
+        tire.castShadow = true;
+        group.add(tire);
+
+        const rimGeo = this.getSharedGeometry('rim_' + wheelRadius, () =>
+            new THREE.CylinderGeometry(wheelRadius * 0.8, wheelRadius * 0.8, wheelRadius * 0.25, 16)
+        );
+        const rim = new THREE.Mesh(rimGeo, rimMat);
+        rim.rotation.x = Math.PI / 2;
+        rim.castShadow = true;
+        group.add(rim);
+
+        const hubGeo = this.getSharedGeometry('hub', () =>
+            new THREE.CylinderGeometry(wheelRadius * 0.2, wheelRadius * 0.2, wheelRadius * 0.3, 12)
+        );
+        const hubMat = this.getSharedMaterial('copper', () =>
+            new THREE.MeshStandardMaterial({ color: 0xb87333, roughness: 0.3, metalness: 0.8 })
+        );
+        const hub = new THREE.Mesh(hubGeo, hubMat);
+        hub.rotation.x = Math.PI / 2;
+        hub.castShadow = true;
+        group.add(hub);
+
+        const spokeGeo = this.getSharedGeometry('spoke', () =>
+            new THREE.BoxGeometry(wheelRadius * 0.06, wheelRadius * 1.5, wheelRadius * 0.06)
+        );
+        const spokes = this.createInstancedMesh(spokeGeo, spokeMat, NUM_SPOKES);
+        spokes.castShadow = true;
+        group.userData.spokes = spokes;
+        group.add(spokes);
+
+        return group;
+    }
+
+    _buildChassis(wheelbase, trackWidth, wheelRadius) {
+        const woodMat = this.getSharedMaterial('wood', () =>
+            new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.7, metalness: 0.1 })
+        );
+        this._materialCache.set('body', woodMat);
+
+        const floorGeo = new THREE.BoxGeometry(wheelbase * 0.8, 0.08, trackWidth);
+        const floor = new THREE.Mesh(floorGeo, woodMat);
+        floor.position.y = wheelRadius + 0.04;
+        floor.castShadow = true;
+        floor.receiveShadow = true;
+        this.chariotGroup.add(floor);
+
+        const frontBoardGeo = new THREE.BoxGeometry(wheelbase * 0.05, 0.5, trackWidth);
+        const frontBoard = new THREE.Mesh(frontBoardGeo, woodMat);
+        frontBoard.position.set(wheelbase * 0.38, wheelRadius + 0.29, 0);
+        frontBoard.castShadow = true;
+        this.chariotGroup.add(frontBoard);
+
+        const rearBoardGeo = new THREE.BoxGeometry(wheelbase * 0.05, 0.6, trackWidth);
+        const rearBoard = new THREE.Mesh(rearBoardGeo, woodMat);
+        rearBoard.position.set(-wheelbase * 0.38, wheelRadius + 0.34, 0);
+        rearBoard.castShadow = true;
+        this.chariotGroup.add(rearBoard);
+
+        const postGeo = new THREE.BoxGeometry(0.06, 0.7, 0.06);
+        const postPositions = [
+            [wheelbase * 0.38, wheelRadius + 0.65, trackWidth / 2 - 0.05],
+            [wheelbase * 0.38, wheelRadius + 0.65, -trackWidth / 2 + 0.05],
+            [-wheelbase * 0.38, wheelRadius + 0.65, trackWidth / 2 - 0.05],
+            [-wheelbase * 0.38, wheelRadius + 0.65, -trackWidth / 2 + 0.05],
+            [wheelbase * 0.0, wheelRadius + 0.65, trackWidth / 2 - 0.05],
+            [wheelbase * 0.0, wheelRadius + 0.65, -trackWidth / 2 + 0.05],
+            [-wheelbase * 0.2, wheelRadius + 0.65, trackWidth / 2 - 0.05],
+            [-wheelbase * 0.2, wheelRadius + 0.65, -trackWidth / 2 + 0.05]
+        ];
+        postPositions.forEach(([x, y, z]) => {
+            const post = new THREE.Mesh(postGeo, woodMat);
+            post.position.set(x, y, z);
+            post.castShadow = true;
+            this.chariotGroup.add(post);
+        });
+
+        const railGeo = new THREE.BoxGeometry(wheelbase * 0.8, 0.04, 0.04);
+        [[trackWidth / 2 - 0.05], [-trackWidth / 2 + 0.05]].forEach(([z]) => {
+            const rail = new THREE.Mesh(railGeo, woodMat);
+            rail.position.set(0, wheelRadius + 0.98, z);
+            rail.castShadow = true;
+            this.chariotGroup.add(rail);
+        });
+
+        const rearRail = new THREE.Mesh(
+            new THREE.BoxGeometry(0.04, 0.04, trackWidth - 0.1),
+            woodMat
+        );
+        rearRail.position.set(-wheelbase * 0.38, wheelRadius + 0.98, 0);
+        rearRail.castShadow = true;
+        this.chariotGroup.add(rearRail);
+    }
+
+    _buildPole(wheelbase, poleLength, wheelRadius) {
+        this.poleGroup = new THREE.Group();
+        this.poleGroup.position.set(wheelbase * 0.4, wheelRadius, 0);
+        this.chariotGroup.add(this.poleGroup);
+
+        const poleGeo = new THREE.CylinderGeometry(0.04, 0.05, poleLength, 12);
+        const poleMat = new THREE.MeshStandardMaterial({
+            color: 0x654321, roughness: 0.7, metalness: 0.1
+        });
+        const pole = new THREE.Mesh(poleGeo, poleMat);
+        pole.rotation.z = Math.PI / 2;
+        pole.position.x = poleLength / 2 - 0.1;
+        pole.castShadow = true;
+        this.poleGroup.add(pole);
+
+        const yokeGeo = new THREE.TorusGeometry(0.2, 0.03, 12, 24);
+        const yokeMat = new THREE.MeshStandardMaterial({
+            color: 0xb87333, roughness: 0.3, metalness: 0.8
+        });
+        const yoke = new THREE.Mesh(yokeGeo, yokeMat);
+        yoke.position.set(poleLength - 0.15, 0, 0);
+        this.poleGroup.add(yoke);
+    }
+
+    setVehicleHeading(headingDeg) {
+        if (this.chariotGroup) {
+            this.chariotGroup.rotation.y = -headingDeg * Math.PI / 180;
+        }
+    }
+
+    setVehiclePosition(x, y) {
+        if (this.chariotGroup) {
+            this.chariotGroup.position.x = x;
+            this.chariotGroup.position.z = -y;
+        }
     }
 }
 

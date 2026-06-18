@@ -19,6 +19,8 @@ class SteeringPanel {
 
         this._bindElements();
         this._bindEvents();
+        this._bindFeatureElements();
+        this._bindFeatureEvents();
         this.connectWebSocket();
         this.startAutoRefresh();
     }
@@ -574,9 +576,590 @@ class SteeringPanel {
         }, 30000);
     }
 
+    _bindFeatureElements() {
+        const ve = {};
+        document.querySelectorAll('.feature-tab').forEach(t => {
+            ve['tab_' + t.dataset.tab] = t;
+        });
+        ['vehicleTypeSelect', 'roadSurfaceSelect',
+         'cmpRoadSurface', 'rcmpVehicleType',
+         'vDriveVehicleType', 'vDriveRoadSurface',
+         'vDrivePoleSlider', 'vDriveReset',
+         'btnAccel', 'btnBrake', 'poleWheel', 'poleWheelValue',
+         'btnRunVehicleComparison', 'btnRunRoadComparison',
+         'winnersGrid', 'roadWinnersGrid',
+         'vehicleInsights', 'roadInsights',
+         'comparisonSummary', 'vDriveAlert', 'throttleFill'
+        ].forEach(id => {
+            ve[id] = document.getElementById(id);
+        });
+        ['vdPosX','vdPosY','vdHeading','vdSpeed','vdRollover','vdStability',
+         'vdInnerAngle','vdOuterAngle','vdTurnRadius','vdYawRate',
+         'vdLatAccel','vdRoll','vdSlip','vdCargoShift'
+        ].forEach(id => {
+            ve[id] = document.getElementById(id);
+        });
+        this.els = { ...this.els, ...ve };
+
+        this._vehicleTypes = [];
+        this._roadSurfaces = [];
+
+        this.vDrive = {
+            sessionId: null,
+            vehicleType: 'chariot_double',
+            roadType: 'ancient_post_road',
+            poleAngle: 0,
+            throttle: 0,
+            brake: 0,
+            keys: {},
+            rafId: null,
+            lastStepTime: 0,
+            isDragging: false,
+            dragStartX: 0,
+            dragStartAngle: 0
+        };
+
+        this.vDrive3d = null;
+    }
+
+    _bindFeatureEvents() {
+        document.querySelectorAll('.feature-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                this.switchTab(tab.dataset.tab);
+            });
+        });
+
+        if (this.els.vehicleTypeSelect) {
+            this.els.vehicleTypeSelect.addEventListener('change', (e) => {
+                if (this.chariot3d && this.chariot3d.switchVehicleType) {
+                    this.chariot3d.switchVehicleType(e.target.value);
+                }
+            });
+        }
+
+        if (this.els.btnRunVehicleComparison) {
+            this.els.btnRunVehicleComparison.addEventListener('click', () => this.runVehicleComparison());
+        }
+        if (this.els.btnRunRoadComparison) {
+            this.els.btnRunRoadComparison.addEventListener('click', () => this.runRoadComparison());
+        }
+
+        if (this.els.vDriveReset) {
+            this.els.vDriveReset.addEventListener('click', () => this.resetVDrive());
+        }
+        if (this.els.vDrivePoleSlider) {
+            this.els.vDrivePoleSlider.addEventListener('input', (e) => {
+                this.vDrive.poleAngle = parseFloat(e.target.value);
+                this.updatePoleWheel();
+            });
+        }
+        if (this.els.vDriveVehicleType) {
+            this.els.vDriveVehicleType.addEventListener('change', (e) => {
+                this.vDrive.vehicleType = e.target.value;
+                if (this.vDrive3d && this.vDrive3d.switchVehicleType) {
+                    this.vDrive3d.switchVehicleType(e.target.value);
+                }
+                this.resetVDrive();
+            });
+        }
+        if (this.els.vDriveRoadSurface) {
+            this.els.vDriveRoadSurface.addEventListener('change', (e) => {
+                this.vDrive.roadType = e.target.value;
+                this.resetVDrive();
+            });
+        }
+        if (this.els.btnAccel) {
+            this.els.btnAccel.addEventListener('mousedown', () => this.vDrive.throttle = 1);
+            this.els.btnAccel.addEventListener('mouseup', () => this.vDrive.throttle = 0);
+            this.els.btnAccel.addEventListener('mouseleave', () => this.vDrive.throttle = 0);
+            this.els.btnAccel.addEventListener('touchstart', (e) => { e.preventDefault(); this.vDrive.throttle = 1; });
+            this.els.btnAccel.addEventListener('touchend', () => this.vDrive.throttle = 0);
+        }
+        if (this.els.btnBrake) {
+            this.els.btnBrake.addEventListener('mousedown', () => this.vDrive.brake = 1);
+            this.els.btnBrake.addEventListener('mouseup', () => this.vDrive.brake = 0);
+            this.els.btnBrake.addEventListener('mouseleave', () => this.vDrive.brake = 0);
+            this.els.btnBrake.addEventListener('touchstart', (e) => { e.preventDefault(); this.vDrive.brake = 1; });
+            this.els.btnBrake.addEventListener('touchend', () => this.vDrive.brake = 0);
+        }
+
+        window.addEventListener('keydown', (e) => this._onKeyDown(e));
+        window.addEventListener('keyup', (e) => this._onKeyUp(e));
+    }
+
+    _onKeyDown(e) {
+        this.vDrive.keys[e.key.toLowerCase()] = true;
+        if (['w', 'arrowup'].includes(e.key.toLowerCase())) this.vDrive.throttle = 1;
+        if (['s', 'arrowdown', ' '].includes(e.key.toLowerCase())) this.vDrive.brake = 1;
+        if (['a', 'arrowleft'].includes(e.key.toLowerCase())) {
+            this.vDrive.poleAngle = Math.max(-45, this.vDrive.poleAngle - 2);
+            this.els.vDrivePoleSlider && (this.els.vDrivePoleSlider.value = this.vDrive.poleAngle);
+            this.updatePoleWheel();
+        }
+        if (['d', 'arrowright'].includes(e.key.toLowerCase())) {
+            this.vDrive.poleAngle = Math.min(45, this.vDrive.poleAngle + 2);
+            this.els.vDrivePoleSlider && (this.els.vDrivePoleSlider.value = this.vDrive.poleAngle);
+            this.updatePoleWheel();
+        }
+    }
+
+    _onKeyUp(e) {
+        this.vDrive.keys[e.key.toLowerCase()] = false;
+        if (['w', 'arrowup'].includes(e.key.toLowerCase()) && !this.vDrive.keys['w'] && !this.vDrive.keys['arrowup']) this.vDrive.throttle = 0;
+        if (['s', 'arrowdown', ' '].includes(e.key.toLowerCase())) {
+            if (!this.vDrive.keys['s'] && !this.vDrive.keys['arrowdown'] && !this.vDrive.keys[' ']) this.vDrive.brake = 0;
+        }
+    }
+
+    switchTab(tabId) {
+        document.querySelectorAll('.feature-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.tab === tabId);
+        });
+        document.querySelectorAll('.tab-content').forEach(c => {
+            c.classList.toggle('hidden', c.id !== 'tab-' + tabId);
+        });
+
+        if (tabId === 'virtual-drive') {
+            this.initVirtualDrive3D();
+            this.startVDriveLoop();
+        } else {
+            this.stopVDriveLoop();
+        }
+
+        if (tabId === 'comparison') {
+            this._ensureComparisonInited();
+        }
+        if (tabId === 'road-comparison') {
+            this._ensureRoadComparisonInited();
+        }
+    }
+
+    displaySystemParams(params) {
+        const geom = params.chariot_geometry || {};
+        const dyn = params.vehicle_dynamics || {};
+
+        document.getElementById('sysWheelbase').textContent = `${geom.wheelbase || 'N/A'} m`;
+        document.getElementById('sysTrackWidth').textContent = `${geom.track_width || 'N/A'} m`;
+        document.getElementById('sysWheelRadius').textContent = `${geom.wheel_radius || 'N/A'} m`;
+        document.getElementById('sysPoleLength').textContent = `${geom.pole_length || 'N/A'} m`;
+        document.getElementById('sysMass').textContent = `${dyn.mass || 'N/A'} kg`;
+        document.getElementById('sysCgHeight').textContent = `${dyn.cg_height || 'N/A'} m`;
+        document.getElementById('sysYawInertia').textContent = `${dyn.yaw_inertia || 'N/A'} kg·m²`;
+
+        if (params.vehicle_types) {
+            this._vehicleTypes = params.vehicle_types;
+            this._populateVehicleSelects();
+        }
+        if (params.road_surfaces) {
+            this._roadSurfaces = params.road_surfaces;
+            this._populateRoadSelects();
+        }
+    }
+
+    _populateVehicleSelects() {
+        const selects = ['vehicleTypeSelect', 'rcmpVehicleType', 'vDriveVehicleType'];
+        selects.forEach(sid => {
+            const el = document.getElementById(sid);
+            if (!el) return;
+            const prev = el.value;
+            el.innerHTML = this._vehicleTypes.map(v =>
+                `<option value="${v.id}" ${v.id === 'chariot_double' ? 'selected' : ''}>${v.name}</option>`
+            ).join('');
+            if (prev && this._vehicleTypes.some(v => v.id === prev)) el.value = prev;
+        });
+    }
+
+    _populateRoadSelects() {
+        const selects = ['roadSurfaceSelect', 'cmpRoadSurface', 'vDriveRoadSurface'];
+        selects.forEach(sid => {
+            const el = document.getElementById(sid);
+            if (!el) return;
+            const prev = el.value;
+            el.innerHTML = this._roadSurfaces.map(r =>
+                `<option value="${r.id}" ${r.id === 'ancient_post_road' ? 'selected' : ''}>${r.name}</option>`
+            ).join('');
+            if (prev && this._roadSurfaces.some(r => r.id === prev)) el.value = prev;
+        });
+    }
+
+    _ensureComparisonInited() {
+        const el = document.getElementById('cmpRoadSurface');
+        if (el && el.options.length === 0 && this._roadSurfaces.length > 0) {
+            this._populateRoadSelects();
+        }
+    }
+
+    _ensureRoadComparisonInited() {
+        const el = document.getElementById('rcmpVehicleType');
+        if (el && el.options.length === 0 && this._vehicleTypes.length > 0) {
+            this._populateVehicleSelects();
+        }
+    }
+
+    async runVehicleComparison() {
+        const btn = this.els.btnRunVehicleComparison;
+        const originalText = btn.textContent;
+        btn.textContent = '计算中...';
+        btn.disabled = true;
+
+        try {
+            const req = {
+                pole_angle_deg: parseFloat(document.getElementById('cmpPoleAngle').value) || 15,
+                speed_mps: parseFloat(document.getElementById('cmpSpeed').value) || 5,
+                road_type: document.getElementById('cmpRoadSurface').value,
+                cargo_mass: parseFloat(document.getElementById('cmpCargoMass').value) || 0
+            };
+            const resp = await fetch('/api/comparison/vehicles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(req)
+            });
+            const result = await resp.json();
+            this.renderVehicleComparison(result);
+        } catch (e) {
+            console.error('车辆对比失败:', e);
+            alert('对比分析失败: ' + e.message);
+        } finally {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    renderVehicleComparison(result) {
+        document.getElementById('comparisonSummary').innerHTML = `
+            <h4 style="color:#00d9ff;margin-bottom:5px;">${result.title}</h4>
+            <div style="font-size:13px;color:#aaa;">${result.subtitle}</div>
+        `;
+
+        if (this.els.winnersGrid) {
+            this.els.winnersGrid.innerHTML = Object.entries(result.winners).map(([k, v]) => `
+                <div class="winner-card">
+                    <div class="metric-name">${k}</div>
+                    <div class="metric-winner">🏆 ${v}</div>
+                </div>
+            `).join('');
+        }
+
+        if (this.els.vehicleInsights) {
+            this.els.vehicleInsights.innerHTML = result.insights.map(i => {
+                let cls = '';
+                if (i.includes('⚠') || i.includes('风险')) cls = 'warning';
+                if (i.includes('危险')) cls = 'danger';
+                return `<li class="${cls}">💡 ${i}</li>`;
+            }).join('');
+        }
+
+        this._renderComparisonTable(
+            'vehicleComparisonTable',
+            result.entries,
+            ['vehicle_name', 'era', 'category', 'steering_mechanism',
+             'inner_wheel_angle', 'outer_wheel_angle', 'turning_radius',
+             'ackermann_error', 'max_inner_wheel_angle', 'min_turning_radius',
+             'yaw_rate', 'lateral_acceleration', 'rollover_risk', 'stability_index',
+             'critical_speed', 'ssf_static', 'understeer_gradient',
+             'max_speed_mps', 'mass', 'cg_height', 'wheelbase', 'track_width', 'propulsion'],
+            {
+                'turning_radius': true, 'ackermann_error': true, 'rollover_risk': true,
+                'understeer_gradient': true, 'min_turning_radius': true, 'cg_height': true
+            },
+            {
+                'stability_index': true, 'critical_speed': true, 'ssf_static': true,
+                'max_speed_mps': true, 'max_inner_wheel_angle': true
+            },
+            {
+                'vehicle_name': '车型', 'era': '时代', 'category': '类别',
+                'steering_mechanism': '转向机构', 'inner_wheel_angle': '内轮角(°)',
+                'outer_wheel_angle': '外轮角(°)', 'turning_radius': '转弯半径(m)',
+                'ackermann_error': '阿克曼误差(%)', 'max_inner_wheel_angle': '最大内轮角(°)',
+                'min_turning_radius': '最小转弯半径(m)', 'yaw_rate': '横摆率(°/s)',
+                'lateral_acceleration': '侧向加速度(g)', 'rollover_risk': '侧翻风险(%)',
+                'stability_index': '稳定性指数', 'critical_speed': '临界速度(m/s)',
+                'ssf_static': 'SSF静态', 'understeer_gradient': '不足转向(°/g)',
+                'max_speed_mps': '最高车速(m/s)', 'mass': '质量(kg)',
+                'cg_height': '重心高(m)', 'wheelbase': '轴距(m)',
+                'track_width': '轮距(m)', 'propulsion': '动力'
+            }
+        );
+    }
+
+    async runRoadComparison() {
+        const btn = this.els.btnRunRoadComparison;
+        const originalText = btn.textContent;
+        btn.textContent = '计算中...';
+        btn.disabled = true;
+
+        try {
+            const req = {
+                vehicle_type: document.getElementById('rcmpVehicleType').value,
+                pole_angle_deg: parseFloat(document.getElementById('rcmpPoleAngle').value) || 15,
+                speed_mps: parseFloat(document.getElementById('rcmpSpeed').value) || 5,
+                cargo_mass: parseFloat(document.getElementById('rcmpCargoMass').value) || 0
+            };
+            const resp = await fetch('/api/comparison/roads', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(req)
+            });
+            const result = await resp.json();
+            this.renderRoadComparison(result);
+        } catch (e) {
+            console.error('路面对比失败:', e);
+            alert('对比分析失败: ' + e.message);
+        } finally {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    renderRoadComparison(result) {
+        if (this.els.roadWinnersGrid) {
+            this.els.roadWinnersGrid.innerHTML = Object.entries(result.winners).map(([k, v]) => `
+                <div class="winner-card">
+                    <div class="metric-name">${k}</div>
+                    <div class="metric-winner">🏆 ${v}</div>
+                </div>
+            `).join('');
+        }
+
+        if (this.els.roadInsights) {
+            this.els.roadInsights.innerHTML = result.insights.map(i => {
+                let cls = '';
+                if (i.includes('⚠') || i.includes('危险')) cls = 'danger';
+                else if (i.includes('建议') || i.includes('风险')) cls = 'warning';
+                return `<li class="${cls}">🛣️ ${i}</li>`;
+            }).join('');
+        }
+
+        this._renderComparisonTable(
+            'roadComparisonTable',
+            result.entries,
+            ['road_name', 'category', 'friction_coeff', 'rolling_resistance', 'slip_factor',
+             'effective_speed', 'turning_radius_effective', 'yaw_rate', 'lateral_acceleration',
+             'rollover_risk', 'stability_index', 'critical_speed', 'ackermann_error',
+             'max_safe_speed', 'traction_force_required', 'vibration_level'],
+            {
+                'rolling_resistance': true, 'slip_factor': true, 'rollover_risk': true,
+                'turning_radius_effective': true, 'traction_force_required': true,
+                'vibration_level': true, 'ackermann_error': true
+            },
+            {
+                'friction_coeff': true, 'stability_index': true, 'max_safe_speed': true,
+                'critical_speed': true, 'effective_speed': true
+            },
+            {
+                'road_name': '路面名称', 'category': '类别',
+                'friction_coeff': '摩擦系数μ', 'rolling_resistance': '滚动阻力系数',
+                'slip_factor': '滑移因子', 'effective_speed': '有效车速(m/s)',
+                'turning_radius_effective': '有效转弯半径(m)', 'yaw_rate': '横摆率(°/s)',
+                'lateral_acceleration': '侧向加速度(g)', 'rollover_risk': '侧翻风险(%)',
+                'stability_index': '稳定性指数', 'critical_speed': '临界速度(m/s)',
+                'ackermann_error': '阿克曼误差(%)', 'max_safe_speed': '安全车速(m/s)',
+                'traction_force_required': '牵引力需求(N)', 'vibration_level': '颠簸等级'
+            }
+        );
+    }
+
+    _renderComparisonTable(tableId, entries, columns, lowerBetter, higherBetter, colLabels) {
+        const table = document.getElementById(tableId);
+        if (!table || !entries || entries.length === 0) return;
+
+        const bestVals = {};
+        columns.forEach(col => {
+            if (lowerBetter[col]) {
+                bestVals[col] = Math.min(...entries.map(e => typeof e[col] === 'number' ? e[col] : Infinity));
+            } else if (higherBetter[col]) {
+                bestVals[col] = Math.max(...entries.map(e => typeof e[col] === 'number' ? e[col] : -Infinity));
+            }
+        });
+
+        const thead = table.querySelector('thead');
+        thead.innerHTML = '<tr>' + columns.map(c =>
+            `<th data-col="${c}">${colLabels[c] || c}</th>`
+        ).join('') + '</tr>';
+
+        const tbody = table.querySelector('tbody');
+        tbody.innerHTML = entries.map(e => '<tr>' + columns.map(c => {
+            let v = e[c];
+            let cls = '';
+            if (typeof v === 'number') {
+                if (v === bestVals[c] && (lowerBetter[c] || higherBetter[c])) cls = 'best-value';
+                if ((lowerBetter[c] && v === Math.max(...entries.map(x => typeof x[c] === 'number' ? x[c] : -Infinity))) ||
+                    (higherBetter[c] && v === Math.min(...entries.map(x => typeof x[c] === 'number' ? x[c] : Infinity)))) {
+                    if (v !== bestVals[c]) cls = 'worst-value';
+                }
+                v = Number.isFinite(v) ? (Math.abs(v) > 100 ? v.toFixed(0) : v.toFixed(2)) : v.toString();
+            }
+            return `<td class="${cls}">${v ?? '-'}</td>`;
+        }).join('') + '</tr>').join('');
+    }
+
+    initVirtualDrive3D() {
+        if (this.vDrive3d) return;
+        this.vDrive3d = new Chariot3D('vDriveCanvas');
+        const canvas = document.querySelector('#vDriveCanvas canvas');
+        if (canvas) {
+            canvas.addEventListener('mousedown', (e) => this._onVDriveDragStart(e));
+            canvas.addEventListener('mousemove', (e) => this._onVDriveDragMove(e));
+            canvas.addEventListener('mouseup', () => this._onVDriveDragEnd());
+            canvas.addEventListener('mouseleave', () => this._onVDriveDragEnd());
+            canvas.addEventListener('touchstart', (e) => this._onVDriveDragStart(e.touches[0]));
+            canvas.addEventListener('touchmove', (e) => { e.preventDefault(); this._onVDriveDragMove(e.touches[0]); }, { passive: false });
+            canvas.addEventListener('touchend', () => this._onVDriveDragEnd());
+        }
+    }
+
+    _onVDriveDragStart(e) {
+        this.vDrive.isDragging = true;
+        this.vDrive.dragStartX = e.clientX;
+        this.vDrive.dragStartAngle = this.vDrive.poleAngle;
+    }
+
+    _onVDriveDragMove(e) {
+        if (!this.vDrive.isDragging) return;
+        const dx = e.clientX - this.vDrive.dragStartX;
+        this.vDrive.poleAngle = Math.max(-45, Math.min(45, this.vDrive.dragStartAngle + dx * 0.3));
+        if (this.els.vDrivePoleSlider) this.els.vDrivePoleSlider.value = this.vDrive.poleAngle;
+        this.updatePoleWheel();
+    }
+
+    _onVDriveDragEnd() {
+        this.vDrive.isDragging = false;
+    }
+
+    updatePoleWheel() {
+        const indicator = document.querySelector('.pole-indicator');
+        if (indicator) indicator.style.transform = `translate(-50%, -50%) rotate(${this.vDrive.poleAngle}deg)`;
+        if (this.els.poleWheelValue) this.els.poleWheelValue.textContent = `${this.vDrive.poleAngle.toFixed(0)}°`;
+    }
+
+    startVDriveLoop() {
+        this.stopVDriveLoop();
+        this.vDrive.lastStepTime = performance.now();
+        const loop = () => {
+            const now = performance.now();
+            const dt = Math.min(0.1, (now - this.vDrive.lastStepTime) / 1000);
+            this.vDrive.lastStepTime = now;
+            this.vDriveStep(dt);
+            this.vDrive.rafId = requestAnimationFrame(loop);
+        };
+        this.vDrive.rafId = requestAnimationFrame(loop);
+    }
+
+    stopVDriveLoop() {
+        if (this.vDrive.rafId) {
+            cancelAnimationFrame(this.vDrive.rafId);
+            this.vDrive.rafId = null;
+        }
+    }
+
+    async resetVDrive() {
+        if (this.vDrive.sessionId) {
+            try { await fetch(`/api/virtual-drive/reset/${this.vDrive.sessionId}`, { method: 'POST' }); } catch (e) {}
+            this.vDrive.sessionId = null;
+        }
+        this.vDrive.poleAngle = 0;
+        this.vDrive.throttle = 0;
+        this.vDrive.brake = 0;
+        if (this.els.vDrivePoleSlider) this.els.vDrivePoleSlider.value = 0;
+        this.updatePoleWheel();
+    }
+
+    async vDriveStep(dt) {
+        if (this.vDrive.throttle === 0 && this.vDrive.brake === 0 &&
+            Math.abs(this.vDrive.poleAngle) < 0.1 && !this.vDrive.sessionId) return;
+
+        const cargoMass = parseFloat(document.getElementById('vDriveCargoMass')?.value) || 0;
+        const cargoX = parseFloat(document.getElementById('vDriveCargoX')?.value) || 0;
+
+        try {
+            const resp = await fetch('/api/virtual-drive/step', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: this.vDrive.sessionId,
+                    vehicle_type: this.vDrive.vehicleType,
+                    road_type: this.vDrive.roadType,
+                    pole_angle_deg: this.vDrive.poleAngle,
+                    throttle: this.vDrive.throttle,
+                    brake: this.vDrive.brake,
+                    cargo_mass: cargoMass,
+                    cargo_offset_lateral: cargoX,
+                    dt: dt
+                })
+            });
+            const state = await resp.json();
+            this.vDrive.sessionId = state.session_id;
+            this.updateVDriveUI(state);
+
+            if (this.vDrive3d) {
+                this.vDrive3d.setVehicleSpeed(state.speed);
+                this.vDrive3d.updateSteering(state.pole_angle, {
+                    inner_wheel_angle: state.inner_wheel_angle,
+                    outer_wheel_angle: state.outer_wheel_angle,
+                    pole_angle_input: state.pole_angle,
+                    wheel_speed_diff: 0
+                });
+                this.vDrive3d.setRolloverRisk(state.rollover_risk);
+                this.vDrive3d.setVehicleHeading(state.heading);
+                this.vDrive3d.setVehiclePosition(state.x, state.y);
+            }
+        } catch (e) {
+            console.warn('虚拟驾驶步进失败:', e.message);
+        }
+    }
+
+    updateVDriveUI(state) {
+        const setText = (id, v, suffix = '') => {
+            const el = this.els[id];
+            if (el && typeof v === 'number') el.textContent = `${Number.isFinite(v) ? v.toFixed(2) : '∞'}${suffix}`;
+            else if (el) el.textContent = `${v}${suffix}`;
+        };
+
+        setText('vdPosX', state.x, ' m');
+        setText('vdPosY', state.y, ' m');
+        setText('vdHeading', state.heading, '°');
+        setText('vdSpeed', state.speed, ' m/s');
+        setText('vdRollover', state.rollover_risk, '%');
+        setText('vdStability', state.stability_index);
+        setText('vdInnerAngle', state.inner_wheel_angle, '°');
+        setText('vdOuterAngle', state.outer_wheel_angle, '°');
+        if (this.els.vdTurnRadius) {
+            this.els.vdTurnRadius.textContent = (state.turning_radius === Infinity || !Number.isFinite(state.turning_radius))
+                ? '∞ m' : `${state.turning_radius.toFixed(2)} m`;
+        }
+        setText('vdYawRate', state.yaw_rate, '°/s');
+        setText('vdLatAccel', state.lateral_acceleration, 'g');
+        setText('vdRoll', state.roll_angle, '°');
+        setText('vdSlip', (state.slip_ratio || 0) * 100, '%');
+        setText('vdCargoShift', (state.cargo_shift_lateral || 0) * 100, ' cm');
+
+        if (this.els.vdRollover) {
+            this.els.vdRollover.className = '';
+            if (state.rollover_risk > 70) this.els.vdRollover.classList.add('text-red-600', 'font-bold');
+            else if (state.rollover_risk > 40) this.els.vdRollover.classList.add('text-yellow-600', 'font-bold');
+            else this.els.vdRollover.classList.add('text-green-600');
+        }
+
+        if (this.els.vDriveAlert) {
+            this.els.vDriveAlert.textContent = state.alert_message || '';
+            this.els.vDriveAlert.className = 'drive-alert';
+            if (state.alert_message) {
+                if (state.is_tipping || state.rollover_risk > 80) this.els.vDriveAlert.classList.add('danger');
+                else if (state.rollover_risk > 60 || state.is_stuck) this.els.vDriveAlert.classList.add('warning');
+                else this.els.vDriveAlert.classList.add('info');
+            }
+        }
+
+        if (this.els.throttleFill) {
+            const t = this.vDrive.throttle - this.vDrive.brake * 0.5;
+            this.els.throttleFill.style.width = `${Math.max(0, Math.min(1, t + 0.5)) * 100}%`;
+        }
+    }
+
     destroy() {
         if (this.ws) this.ws.close();
         if (this.autoRefreshInterval) clearInterval(this.autoRefreshInterval);
+        this.stopVDriveLoop();
     }
 }
 

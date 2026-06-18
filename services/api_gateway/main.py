@@ -7,11 +7,15 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 import uvicorn
 import time
+import uuid
 
 from common import (
     get_config_loader, RedisClient, SensorData, SteeringResult,
-    StabilityResult, Alert, timestamp
+    StabilityResult, Alert, timestamp,
+    RoadSurfaceModel, MultiVehicleSteeringModel,
+    ComparisonAnalyzer, VirtualDriveEngine, CargoConfig
 )
+from common.stability_analysis import CargoConfig as _CargoConfig
 
 
 class SensorRequest(BaseModel):
@@ -41,6 +45,43 @@ class StabilityRequest(BaseModel):
     cargo_offset_height: float = 0.0
 
 
+class VehicleComparisonRequest(BaseModel):
+    vehicle_types: List[str] = ["chariot_double", "wheelbarrow_single", "chariot_four_wheel", "modern_car"]
+    pole_angle_deg: float = 15.0
+    speed_mps: float = 5.0
+    friction_coeff: float = 0.5
+    road_type: str = "ancient_post_road"
+    cargo_mass: float = 0.0
+    cargo_offset_lateral: float = 0.0
+    cargo_offset_longitudinal: float = 0.0
+    cargo_offset_height: float = 0.0
+
+
+class RoadComparisonRequest(BaseModel):
+    vehicle_type: str = "chariot_double"
+    pole_angle_deg: float = 15.0
+    speed_mps: float = 5.0
+    road_types: List[str] = ["stone_pavement", "dirt_road", "mud_road", "asphalt_dry", "ancient_post_road"]
+    cargo_mass: float = 0.0
+    cargo_offset_lateral: float = 0.0
+    cargo_offset_longitudinal: float = 0.0
+    cargo_offset_height: float = 0.0
+
+
+class VirtualDriveStepRequest(BaseModel):
+    session_id: str = None
+    vehicle_type: str = "chariot_double"
+    road_type: str = "ancient_post_road"
+    pole_angle_deg: float = 0.0
+    throttle: float = 0.0
+    brake: float = 0.0
+    cargo_mass: float = 0.0
+    cargo_offset_lateral: float = 0.0
+    cargo_offset_longitudinal: float = 0.0
+    cargo_offset_height: float = 0.0
+    dt: float = 0.05
+
+
 config = get_config_loader()
 app = FastAPI(title="API Gateway", version="2.0.0")
 
@@ -50,10 +91,15 @@ channels: Dict[str, str] = {}
 active_websockets: List[WebSocket] = []
 latest_data: Dict[str, Dict[str, Any]] = {}
 
+_road_model: RoadSurfaceModel = None
+_vehicle_model: MultiVehicleSteeringModel = None
+_comparison_analyzer: ComparisonAnalyzer = None
+_virtual_drive_engine: VirtualDriveEngine = None
+
 
 @app.on_event("startup")
 async def startup():
-    global redis, channels
+    global redis, channels, _road_model, _vehicle_model, _comparison_analyzer, _virtual_drive_engine
 
     sys_cfg = config.system_config()
     channels = sys_cfg['redis_channels']
@@ -61,11 +107,17 @@ async def startup():
     redis = RedisClient(**sys_cfg['redis'])
     redis.connect()
 
-    # 订阅数据通道，广播给WebSocket
+    _road_model = RoadSurfaceModel()
+    _vehicle_model = MultiVehicleSteeringModel()
+    _comparison_analyzer = ComparisonAnalyzer()
+    _virtual_drive_engine = VirtualDriveEngine()
+
     redis.subscribe(channels['sensor_data_validated'], broadcast_ws)
     redis.subscribe(channels['steering_result'], broadcast_ws)
     redis.subscribe(channels['stability_result'], broadcast_ws)
     redis.subscribe(channels['alerts'], broadcast_ws)
+    redis.subscribe(channels.get('comparison_result', 'chariot:result:comparison'), broadcast_ws)
+    redis.subscribe(channels.get('virtual_drive', 'chariot:virtual:drive'), broadcast_ws)
 
     print(f"[api_gateway] 启动完成, HTTP端口: 8000")
 
@@ -112,7 +164,9 @@ async def websocket_realtime(websocket: WebSocket):
             "type": "system_params",
             "chariot_geometry": config.chariot_geometry(),
             "vehicle_dynamics": config.vehicle_dynamics(),
-            "alert_thresholds": config.alert_thresholds()
+            "alert_thresholds": config.alert_thresholds(),
+            "vehicle_types": _vehicle_model.list_vehicle_types() if _vehicle_model else [],
+            "road_surfaces": _road_model.list_road_types() if _road_model else []
         }
         await websocket.send_json(params)
 
@@ -201,8 +255,98 @@ async def get_system_params():
     return {
         "chariot_geometry": config.chariot_geometry(),
         "vehicle_dynamics": config.vehicle_dynamics(),
-        "alert_thresholds": config.alert_thresholds()
+        "alert_thresholds": config.alert_thresholds(),
+        "vehicle_types": _vehicle_model.list_vehicle_types() if _vehicle_model else [],
+        "road_surfaces": _road_model.list_road_types() if _road_model else []
     }
+
+
+@app.get("/api/vehicle/types")
+async def list_vehicle_types():
+    if not _vehicle_model:
+        raise HTTPException(status_code=503, detail="服务未就绪")
+    return {"vehicles": _vehicle_model.list_vehicle_types()}
+
+
+@app.get("/api/road/surfaces")
+async def list_road_surfaces():
+    if not _road_model:
+        raise HTTPException(status_code=503, detail="服务未就绪")
+    return {"surfaces": _road_model.list_road_types()}
+
+
+@app.post("/api/comparison/vehicles")
+async def compare_vehicles(req: VehicleComparisonRequest):
+    if not _comparison_analyzer:
+        raise HTTPException(status_code=503, detail="服务未就绪")
+    cargo = _CargoConfig(
+        mass=req.cargo_mass,
+        offset_lateral=req.cargo_offset_lateral,
+        offset_longitudinal=req.cargo_offset_longitudinal,
+        offset_height=req.cargo_offset_height
+    )
+    result = _comparison_analyzer.compare_vehicles(
+        vehicle_types=req.vehicle_types,
+        pole_angle_deg=req.pole_angle_deg,
+        speed_mps=req.speed_mps,
+        friction_coeff=req.friction_coeff,
+        road_type=req.road_type,
+        cargo=cargo
+    )
+    return result.to_dict()
+
+
+@app.post("/api/comparison/roads")
+async def compare_roads(req: RoadComparisonRequest):
+    if not _comparison_analyzer:
+        raise HTTPException(status_code=503, detail="服务未就绪")
+    cargo = _CargoConfig(
+        mass=req.cargo_mass,
+        offset_lateral=req.cargo_offset_lateral,
+        offset_longitudinal=req.cargo_offset_longitudinal,
+        offset_height=req.cargo_offset_height
+    )
+    result = _comparison_analyzer.compare_road_surfaces(
+        vehicle_type=req.vehicle_type,
+        pole_angle_deg=req.pole_angle_deg,
+        speed_mps=req.speed_mps,
+        road_types=req.road_types,
+        cargo=cargo
+    )
+    return result.to_dict()
+
+
+@app.post("/api/virtual-drive/step")
+async def virtual_drive_step(req: VirtualDriveStepRequest):
+    if not _virtual_drive_engine:
+        raise HTTPException(status_code=503, detail="服务未就绪")
+    if req.session_id is None:
+        req.session_id = str(uuid.uuid4())
+    cargo = _CargoConfig(
+        mass=req.cargo_mass,
+        offset_lateral=req.cargo_offset_lateral,
+        offset_longitudinal=req.cargo_offset_longitudinal,
+        offset_height=req.cargo_offset_height
+    )
+    state = _virtual_drive_engine.step(
+        session_id=req.session_id,
+        vehicle_type=req.vehicle_type,
+        road_type=req.road_type,
+        pole_angle_deg=req.pole_angle_deg,
+        throttle=req.throttle,
+        brake=req.brake,
+        cargo=cargo,
+        dt=req.dt
+    )
+    return state.to_dict()
+
+
+@app.post("/api/virtual-drive/reset/{session_id}")
+async def virtual_drive_reset(session_id: str):
+    if not _virtual_drive_engine:
+        raise HTTPException(status_code=503, detail="服务未就绪")
+    _virtual_drive_engine.reset_session(session_id)
+    return {"status": "ok", "session_id": session_id}
 
 
 @app.get("/api/data/latest/{vehicle_id}")

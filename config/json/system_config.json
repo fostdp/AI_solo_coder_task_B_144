@@ -27,13 +27,23 @@
         "steering_result": "chariot:result:steering",
         "stability_result": "chariot:result:stability",
         "alerts": "chariot:alerts",
+        "comparison_result": "chariot:result:comparison",
+        "virtual_drive": "chariot:virtual:drive",
         "api_request": {
             "steering": "chariot:api:steering",
-            "stability": "chariot:api:stability"
+            "stability": "chariot:api:stability",
+            "comparison": "chariot:api:comparison",
+            "virtual_drive": "chariot:api:virtual_drive"
         },
         "api_response": {
             "steering": "chariot:api:steering:resp",
-            "stability": "chariot:api:stability:resp"
+            "stability": "chariot:api:stability:resp",
+            "comparison": "chariot:api:comparison:resp",
+            "virtual_drive": "chariot:api:virtual_drive:resp"
         }
+    },
+    "config_paths": {
+        "vehicle_types": "vehicle_types.json",
+        "road_surfaces": "road_surface_types.json"
     }
 }

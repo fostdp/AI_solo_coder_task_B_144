@@ -1,0 +1,130 @@
+{
+    "chariot_double": {
+        "name": "秦汉双辕车",
+        "era": "古代",
+        "category": "双辕车",
+        "description": "秦汉时期标准双辕战车，一辕双轮，牲畜牵引",
+        "geometry": {
+            "wheelbase": 2.5,
+            "track_width": 1.8,
+            "wheel_radius": 0.35,
+            "pole_length": 1.8,
+            "kingpin_offset": 0.1,
+            "steering_arm_length": 0.25,
+            "tie_rod_length": -1.0,
+            "ackermann_angle_deg": 12.0
+        },
+        "dynamics": {
+            "mass": 800.0,
+            "cg_height": 0.8,
+            "cg_longitudinal": 0.0,
+            "cg_lateral": 0.0,
+            "roll_center_height": 0.3,
+            "yaw_inertia": 1200.0,
+            "roll_stiffness": 30000.0,
+            "damping_ratio": 0.3,
+            "cornering_stiffness_front": 25000.0,
+            "cornering_stiffness_rear": 35000.0
+        },
+        "steering_type": "four_bar_ackermann",
+        "max_steering_angle_deg": 35.0,
+        "max_speed_mps": 8.0,
+        "propulsion": "animal"
+    },
+    "wheelbarrow_single": {
+        "name": "古代独轮车",
+        "era": "古代",
+        "category": "独轮车",
+        "description": "中国古代独轮车（木牛流马类型），单轮着地，人工推动",
+        "geometry": {
+            "wheelbase": 0.0,
+            "track_width": 0.0,
+            "wheel_radius": 0.4,
+            "pole_length": 2.2,
+            "kingpin_offset": 0.0,
+            "steering_arm_length": 0.0,
+            "tie_rod_length": 0.0,
+            "ackermann_angle_deg": 0.0
+        },
+        "dynamics": {
+            "mass": 150.0,
+            "cg_height": 0.7,
+            "cg_longitudinal": -0.2,
+            "cg_lateral": 0.0,
+            "roll_center_height": 0.1,
+            "yaw_inertia": 200.0,
+            "roll_stiffness": 5000.0,
+            "damping_ratio": 0.5,
+            "cornering_stiffness_front": 8000.0,
+            "cornering_stiffness_rear": 0.0
+        },
+        "steering_type": "single_wheel_direct",
+        "max_steering_angle_deg": 75.0,
+        "max_speed_mps": 2.5,
+        "propulsion": "human"
+    },
+    "chariot_four_wheel": {
+        "name": "古代四轮车",
+        "era": "古代",
+        "category": "四轮车",
+        "description": "古代重型四轮辎车，前后各双轮，前桥转向，牲畜牵引",
+        "geometry": {
+            "wheelbase": 3.2,
+            "track_width": 2.0,
+            "wheel_radius": 0.4,
+            "pole_length": 2.5,
+            "kingpin_offset": 0.12,
+            "steering_arm_length": 0.3,
+            "tie_rod_length": -1.0,
+            "ackermann_angle_deg": 10.0
+        },
+        "dynamics": {
+            "mass": 1500.0,
+            "cg_height": 1.0,
+            "cg_longitudinal": 0.3,
+            "cg_lateral": 0.0,
+            "roll_center_height": 0.4,
+            "yaw_inertia": 3500.0,
+            "roll_stiffness": 50000.0,
+            "damping_ratio": 0.35,
+            "cornering_stiffness_front": 40000.0,
+            "cornering_stiffness_rear": 50000.0
+        },
+        "steering_type": "front_axle_ackermann",
+        "max_steering_angle_deg": 30.0,
+        "max_speed_mps": 6.0,
+        "propulsion": "animal"
+    },
+    "modern_car": {
+        "name": "现代家用轿车",
+        "era": "现代",
+        "category": "现代汽车",
+        "description": "现代家用轿车对比参考，齿轮齿条转向，麦弗逊悬架",
+        "geometry": {
+            "wheelbase": 2.7,
+            "track_width": 1.55,
+            "wheel_radius": 0.33,
+            "pole_length": 0.0,
+            "kingpin_offset": 0.04,
+            "steering_arm_length": 0.15,
+            "tie_rod_length": -1.0,
+            "ackermann_angle_deg": 8.0
+        },
+        "dynamics": {
+            "mass": 1400.0,
+            "cg_height": 0.55,
+            "cg_longitudinal": -0.05,
+            "cg_lateral": 0.0,
+            "roll_center_height": 0.12,
+            "yaw_inertia": 2200.0,
+            "roll_stiffness": 80000.0,
+            "damping_ratio": 0.25,
+            "cornering_stiffness_front": 60000.0,
+            "cornering_stiffness_rear": 70000.0
+        },
+        "steering_type": "rack_pinion_ackermann",
+        "max_steering_angle_deg": 40.0,
+        "max_speed_mps": 50.0,
+        "propulsion": "engine"
+    }
+}

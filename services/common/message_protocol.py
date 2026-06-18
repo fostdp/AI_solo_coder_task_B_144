@@ -1,6 +1,33 @@
 from dataclasses import dataclass, asdict, field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from enum import Enum
 import time
+
+
+class VehicleType(str, Enum):
+    CHARIOT_DOUBLE = "chariot_double"
+    WHEELBARROW_SINGLE = "wheelbarrow_single"
+    CHARIOT_FOUR_WHEEL = "chariot_four_wheel"
+    MODERN_CAR = "modern_car"
+
+
+class RoadSurface(str, Enum):
+    ASPHALT_DRY = "asphalt_dry"
+    STONE_PAVEMENT = "stone_pavement"
+    DIRT_ROAD = "dirt_road"
+    MUD_ROAD = "mud_road"
+    GRAVEL_ROAD = "gravel_road"
+    SAND_ROAD = "sand_road"
+    ICE_SNOW = "ice_snow"
+    ANCIENT_POST_ROAD = "ancient_post_road"
+
+
+class SteeringMechanism(str, Enum):
+    FOUR_BAR_ACKERMANN = "four_bar_ackermann"
+    SINGLE_WHEEL_DIRECT = "single_wheel_direct"
+    FRONT_AXLE_ACKERMANN = "front_axle_ackermann"
+    RACK_PINION_ACKERMANN = "rack_pinion_ackermann"
+    PURE_ACKERMANN = "pure_ackermann"
 
 
 def timestamp() -> float:
@@ -170,6 +197,158 @@ class Alert:
             timestamp=float(data.get('timestamp', timestamp())),
             acknowledged=bool(data.get('acknowledged', False))
         )
+
+
+@dataclass
+class RoadEffect:
+    friction_coeff: float
+    rolling_resistance: float
+    slip_factor: float
+    bump_amplitude: float
+    irregularity: float
+    road_type: str = ""
+    effective_cornering_stiffness_front: float = 0.0
+    effective_cornering_stiffness_rear: float = 0.0
+    vibration_acceleration: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class VehicleComparisonEntry:
+    vehicle_type: str
+    vehicle_name: str
+    era: str
+    category: str
+    steering_mechanism: str
+    inner_wheel_angle: float
+    outer_wheel_angle: float
+    turning_radius: float
+    ackermann_error: float
+    max_inner_wheel_angle: float
+    min_turning_radius: float
+    transmission_angle_min: float
+    yaw_rate: float
+    lateral_acceleration: float
+    rollover_risk: float
+    stability_index: float
+    critical_speed: float
+    ssf_static: float
+    understeer_gradient: float
+    max_speed_mps: float
+    mass: float
+    cg_height: float
+    wheelbase: float
+    track_width: float
+    propulsion: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RoadComparisonEntry:
+    road_type: str
+    road_name: str
+    category: str
+    friction_coeff: float
+    rolling_resistance: float
+    slip_factor: float
+    effective_speed: float
+    turning_radius_effective: float
+    yaw_rate: float
+    lateral_acceleration: float
+    rollover_risk: float
+    stability_index: float
+    critical_speed: float
+    ackermann_error: float
+    max_safe_speed: float
+    traction_force_required: float
+    vibration_level: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ComparisonResult:
+    comparison_type: str
+    title: str
+    subtitle: str
+    input_conditions: Dict[str, Any]
+    entries: List[Dict[str, Any]]
+    winners: Dict[str, str]
+    insights: List[str]
+    timestamp: float = field(default_factory=timestamp)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class VirtualDriveRequest:
+    session_id: str
+    vehicle_type: str
+    road_type: str
+    pole_angle: float
+    speed: float
+    cargo_mass: float = 0.0
+    cargo_offset_lateral: float = 0.0
+    cargo_offset_longitudinal: float = 0.0
+    cargo_offset_height: float = 0.0
+    timestamp: float = field(default_factory=timestamp)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'VirtualDriveRequest':
+        return cls(
+            session_id=data['session_id'],
+            vehicle_type=data.get('vehicle_type', 'chariot_double'),
+            road_type=data.get('road_type', 'ancient_post_road'),
+            pole_angle=float(data['pole_angle']),
+            speed=float(data['speed']),
+            cargo_mass=float(data.get('cargo_mass', 0)),
+            cargo_offset_lateral=float(data.get('cargo_offset_lateral', 0)),
+            cargo_offset_longitudinal=float(data.get('cargo_offset_longitudinal', 0)),
+            cargo_offset_height=float(data.get('cargo_offset_height', 0)),
+            timestamp=float(data.get('timestamp', timestamp()))
+        )
+
+
+@dataclass
+class VirtualDriveState:
+    session_id: str
+    vehicle_type: str
+    road_type: str
+    x: float
+    y: float
+    heading: float
+    speed: float
+    pole_angle: float
+    inner_wheel_angle: float
+    outer_wheel_angle: float
+    turning_radius: float
+    roll_angle: float
+    roll_rate: float
+    yaw_rate: float
+    lateral_acceleration: float
+    rollover_risk: float
+    stability_index: float
+    effective_friction: float
+    slip_ratio: float
+    wheel_rotation: List[float]
+    cargo_shift_lateral: float
+    cargo_shift_vertical: float
+    alert_message: str = ""
+    is_tipping: bool = False
+    is_stuck: bool = False
+    timestamp: float = field(default_factory=timestamp)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 def create_response(request_id: str, success: bool, data: Dict[str, Any] = None,
