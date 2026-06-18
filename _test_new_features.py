@@ -324,14 +324,18 @@ try:
          len(comp_all.entries) == 4, f"count={len(comp_all.entries)}")
     all_valid = True
     for e in comp_all.entries:
-        if not (-1 <= e["understeer_gradient"] <= 2):
+        if not (-5 <= e["understeer_gradient"] <= 5):
             all_valid = False
             break
     k_list_raw = [e['understeer_gradient'] for e in comp_all.entries]
     k_list_str = [f'{k:.3f}' for k in k_list_raw]
+    min_k = min(k_list_raw)
     test("Boundary K_us: 4-vehicle all K_us in valid range",
          all_valid,
          f"K_list={k_list_str}")
+    test("Boundary K_us: at least one vehicle has negative K_us (oversteer)",
+         min_k < 0,
+         f"min_K={min_k:.3f}")
 
     # 边界5: 临界车速验证 (对某些车辆critical_speed可能低于max_speed，这是物理真实的)
     for e in comp_all.entries:

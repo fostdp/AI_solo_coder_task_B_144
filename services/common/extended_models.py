@@ -81,20 +81,22 @@ class RoadSurfaceModel:
         )
 
     def list_road_types(self) -> List[Dict[str, Any]]:
-        return [
-            {
+        result = []
+        for key, v in self._config.items():
+            if key.startswith('_') or not isinstance(v, dict) or 'friction_min' not in v:
+                continue
+            result.append({
                 'id': key,
-                'name': v['name'],
-                'category': v['category'],
-                'description': v['description'],
-                'friction_min': v['friction_min'],
-                'friction_max': v['friction_max'],
-                'slip_factor': v['slip_factor'],
-                'rolling_resistance': v['rolling_resistance'],
-                'irregularity': v['irregularity']
-            }
-            for key, v in self._config.items()
-        ]
+                'name': v.get('name', key),
+                'category': v.get('category', ''),
+                'description': v.get('description', ''),
+                'friction_min': v.get('friction_min', 0),
+                'friction_max': v.get('friction_max', 0),
+                'slip_factor': v.get('slip_factor', 1.0),
+                'rolling_resistance': v.get('rolling_resistance', 0),
+                'irregularity': v.get('irregularity', 0)
+            })
+        return result
 
 
 class MultiVehicleSteeringModel:
@@ -114,23 +116,25 @@ class MultiVehicleSteeringModel:
     def list_vehicle_types(self) -> List[Dict[str, Any]]:
         result = []
         for key, v in self._vehicle_configs.items():
+            if key.startswith('_') or not isinstance(v, dict) or 'geometry' not in v:
+                continue
             geo = v['geometry']
             dyn = v['dynamics']
             result.append({
                 'id': key,
                 'name': v['name'],
-                'era': v['era'],
-                'category': v['category'],
-                'description': v['description'],
-                'steering_type': v['steering_type'],
-                'max_steering_angle_deg': v['max_steering_angle_deg'],
-                'max_speed_mps': v['max_speed_mps'],
-                'propulsion': v['propulsion'],
-                'wheelbase': geo['wheelbase'],
-                'track_width': geo['track_width'],
-                'wheel_radius': geo['wheel_radius'],
-                'mass': dyn['mass'],
-                'cg_height': dyn['cg_height']
+                'era': v.get('era', '未知'),
+                'category': v.get('category', ''),
+                'description': v.get('description', ''),
+                'steering_type': v.get('steering_type', ''),
+                'max_steering_angle_deg': v.get('max_steering_angle_deg', 30),
+                'max_speed_mps': v.get('max_speed_mps', 0),
+                'propulsion': v.get('propulsion', ''),
+                'wheelbase': geo.get('wheelbase', 0),
+                'track_width': geo.get('track_width', 0),
+                'wheel_radius': geo.get('wheel_radius', 0),
+                'mass': dyn.get('mass', 0),
+                'cg_height': dyn.get('cg_height', 0)
             })
         return result
 
@@ -496,268 +500,45 @@ class RackPinionSteeringModel:
 
 
 class ComparisonAnalyzer:
+    """
+    [重构后 v2.0] 对比分析器
+    - compare_vehicles 路由到 steering_comparator.SteeringComparator
+    - compare_road_surfaces 路由到 road_simulator.RoadSimulator
+    保持原有 API 签名 100% 不变，确保后向兼容。
+    """
+
     def __init__(self):
-        self._steering = MultiVehicleSteeringModel()
-        self._road = RoadSurfaceModel()
+        # 延迟导入，避免循环依赖
+        from .steering_comparator import SteeringComparator
+        from .era_comparator import EraComparator
+        from .road_simulator import RoadSimulator
+        self._steering_cmp = SteeringComparator()
+        self._era_cmp = EraComparator()
+        self._road_sim = RoadSimulator()
+        self._steering = self._steering_cmp._steering
+        self._road = self._road_sim._road
 
-    def compare_vehicles(self, vehicle_types: List[str], pole_angle_deg: float,
-                         speed_mps: float, friction_coeff: float,
-                         road_type: str = 'dirt_road',
-                         cargo: CargoConfig = None) -> ComparisonResult:
-        entries = []
-        for vt in vehicle_types:
-            steering = self._steering.compute_steering(
-                vt, pole_angle_deg, speed_mps, friction_coeff, road_type
-            )
-            stability = self._steering.compute_stability(
-                vt, pole_angle_deg, speed_mps, 0.0, friction_coeff, cargo, road_type
-            )
-            if not steering or not stability:
-                continue
-            entries.append(VehicleComparisonEntry(
-                vehicle_type=vt,
-                vehicle_name=steering['vehicle_name'],
-                era=self._steering.get_vehicle_config(vt).era,
-                category=self._steering.get_vehicle_config(vt).category,
-                steering_mechanism=steering['steering_type'],
-                inner_wheel_angle=steering['inner_wheel_angle'],
-                outer_wheel_angle=steering['outer_wheel_angle'],
-                turning_radius=steering['turning_radius'],
-                ackermann_error=steering['ackermann_error'],
-                max_inner_wheel_angle=steering['max_inner_wheel_angle_deg'],
-                min_turning_radius=self._estimate_min_turning_radius(vt),
-                transmission_angle_min=min(
-                    steering.get('transmission_angle_inner', 75.0),
-                    steering.get('transmission_angle_outer', 75.0)
-                ),
-                yaw_rate=stability['yaw_rate'],
-                lateral_acceleration=stability['lateral_acceleration'],
-                rollover_risk=stability['rollover_risk'],
-                stability_index=stability['stability_index'],
-                critical_speed=stability['critical_speed'],
-                ssf_static=stability['ssf_static'],
-                understeer_gradient=stability['understeer_gradient'],
-                max_speed_mps=stability['max_speed_mps'],
-                mass=stability['mass'],
-                cg_height=stability['cg_height'],
-                wheelbase=stability['wheelbase'],
-                track_width=stability['track_width'],
-                propulsion=stability['propulsion']
-            ).to_dict())
-
-        winners = self._find_vehicle_winners(entries)
-        insights = self._generate_vehicle_insights(entries, pole_angle_deg, speed_mps, road_type)
-
-        return ComparisonResult(
-            comparison_type='vehicle',
-            title='古代车辆与现代汽车转向机构对比分析',
-            subtitle=f'辕杆角 {pole_angle_deg}° | 车速 {speed_mps} m/s | 路面: {self._road.get_surface_config(road_type).get("name", road_type)}',
-            input_conditions={
-                'pole_angle_deg': pole_angle_deg,
-                'speed_mps': speed_mps,
-                'friction_coeff': friction_coeff,
-                'road_type': road_type
-            },
-            entries=entries,
-            winners=winners,
-            insights=insights
+    def compare_vehicles(self, vehicle_types, pole_angle_deg, speed_mps,
+                         friction_coeff, road_type='dirt_road', cargo=None):
+        return self._steering_cmp.compare(
+            vehicle_types, pole_angle_deg, speed_mps, friction_coeff,
+            road_type, cargo
         )
 
-    def _estimate_min_turning_radius(self, vehicle_type: str) -> float:
-        config = self._steering.get_vehicle_config(vehicle_type)
-        if not config:
-            return 999.0
-        max_delta = math.radians(config.max_steering_angle_deg)
-        if abs(max_delta) < 0.01:
-            return float('inf')
-        return config.geometry.wheelbase / math.tan(max_delta * 0.85)
-
-    def _find_vehicle_winners(self, entries: List[Dict]) -> Dict[str, str]:
-        winners = {}
-        if not entries:
-            return winners
-        categories = [
-            ('最小转弯半径', 'min_turning_radius', True),
-            ('最高临界速度', 'critical_speed', False),
-            ('最低阿克曼误差', 'ackermann_error', True),
-            ('最高稳定性指数', 'stability_index', False),
-            ('最低侧翻风险', 'rollover_risk', True),
-            ('最高静态稳定系数SSF', 'ssf_static', False),
-            ('最大内轮转角', 'max_inner_wheel_angle', False),
-            ('最高最高车速', 'max_speed_mps', False)
-        ]
-        for name, key, lower_is_better in categories:
-            sorted_entries = sorted(entries, key=lambda e: e.get(key, float('inf') if lower_is_better else 0), reverse=not lower_is_better)
-            winners[name] = sorted_entries[0]['vehicle_name']
-        return winners
-
-    def _generate_vehicle_insights(self, entries: List[Dict], pole_deg: float,
-                                    speed: float, road_type: str) -> List[str]:
-        insights = []
-        if len(entries) < 2:
-            return insights
-        ancient = [e for e in entries if e.get('era') == '古代']
-        modern = [e for e in entries if e.get('era') == '现代']
-
-        if ancient and modern:
-            avg_radius_ancient = sum(e['turning_radius'] for e in ancient if e['turning_radius'] != float('inf')) / max(1, len(ancient))
-            avg_radius_modern = sum(e['turning_radius'] for e in modern if e['turning_radius'] != float('inf')) / max(1, len(modern))
-            if avg_radius_ancient < avg_radius_modern:
-                insights.append(f"在当前工况下，古代车辆平均转弯半径({avg_radius_ancient:.1f}m)比现代汽车({avg_radius_modern:.1f}m)更紧凑，显示出古代城市狭窄街道适应性设计。")
-            else:
-                insights.append(f"现代汽车平均转弯半径({avg_radius_modern:.1f}m)优于古代车辆({avg_radius_ancient:.1f}m)，齿轮齿条转向精度更高。")
-
-            avg_stab_ancient = sum(e['stability_index'] for e in ancient) / len(ancient)
-            avg_stab_modern = sum(e['stability_index'] for e in modern) / len(modern)
-            insights.append(f"现代汽车稳定性指数({avg_stab_modern:.2f})比古代车辆({avg_stab_ancient:.2f})高出{((avg_stab_modern - avg_stab_ancient) / max(0.01, avg_stab_ancient) * 100):.0f}%，低重心和独立悬架设计贡献显著。")
-
-            max_speed_ancient = max(e['max_speed_mps'] for e in ancient) if ancient else 0
-            max_speed_modern = max(e['max_speed_mps'] for e in modern) if modern else 0
-            insights.append(f"动力系统差异：古代畜力最高约{max_speed_ancient * 3.6:.0f}km/h，现代内燃机可达{max_speed_modern * 3.6:.0f}km/h，速度提升约{(max_speed_modern / max(0.1, max_speed_ancient)):.1f}倍。")
-
-        for e in entries:
-            if e.get('ackermann_error', 0) > 0.05:
-                insights.append(f"{e['vehicle_name']}阿克曼误差为{e['ackermann_error']*100:.1f}%，高速转弯时轮胎磨损较明显。")
-            if e.get('rollover_risk', 0) > 50:
-                insights.append(f"⚠ {e['vehicle_name']}在当前工况下侧翻风险达{e['rollover_risk']:.0f}%，重心偏高是主要原因。")
-
-        wheelbarrow = [e for e in entries if e.get('category') == '独轮车']
-        if wheelbarrow:
-            w = wheelbarrow[0]
-            insights.append(f"独轮车转弯半径仅{w['turning_radius'] if w['turning_radius'] != float('inf') else '∞'}m，原地转向能力极强，但侧翻风险{w['rollover_risk']:.0f}%，需极高驾驶技巧。")
-
-        if not insights:
-            insights.append("各车辆在当前工况下表现均衡，可调整参数观察差异。")
-        return insights
-
-    def compare_road_surfaces(self, vehicle_type: str, pole_angle_deg: float,
-                              speed_mps: float, road_types: List[str],
-                              cargo: CargoConfig = None) -> ComparisonResult:
-        entries = []
-        for rt in road_types:
-            cfg = self._road.get_surface_config(rt)
-            mu = (cfg['friction_min'] + cfg['friction_max']) / 2
-            steering = self._steering.compute_steering(
-                vehicle_type, pole_angle_deg, speed_mps, mu, rt
-            )
-            stability = self._steering.compute_stability(
-                vehicle_type, pole_angle_deg, speed_mps, 0.0, mu, cargo, rt
-            )
-            if not steering or not stability:
-                continue
-            vehicle_config = self._steering.get_vehicle_config(vehicle_type)
-            effective_speed = speed_mps / cfg.get('slip_factor', 1.0)
-            traction_force = cfg.get('rolling_resistance', 0.05) * vehicle_config.dynamics.mass * 9.81
-            entries.append(RoadComparisonEntry(
-                road_type=rt,
-                road_name=cfg.get('name', rt),
-                category=cfg.get('category', ''),
-                friction_coeff=mu,
-                rolling_resistance=cfg.get('rolling_resistance', 0),
-                slip_factor=cfg.get('slip_factor', 1.0),
-                effective_speed=effective_speed,
-                turning_radius_effective=steering['turning_radius'] * cfg.get('slip_factor', 1.0),
-                yaw_rate=stability['yaw_rate'],
-                lateral_acceleration=stability['lateral_acceleration'],
-                rollover_risk=stability['rollover_risk'],
-                stability_index=stability['stability_index'],
-                critical_speed=stability['critical_speed'],
-                ackermann_error=steering['ackermann_error'],
-                max_safe_speed=min(stability['critical_speed'], vehicle_config.max_speed_mps),
-                traction_force_required=traction_force,
-                vibration_level=stability['vibration_level']
-            ).to_dict())
-
-        winners = self._find_road_winners(entries)
-        insights = self._generate_road_insights(entries, vehicle_type, pole_angle_deg, speed_mps)
-
-        return ComparisonResult(
-            comparison_type='road',
-            title='不同路面条件操控稳定性对比',
-            subtitle=f'车辆: {self._steering.get_vehicle_config(vehicle_type).name if self._steering.get_vehicle_config(vehicle_type) else vehicle_type} | 辕杆角 {pole_angle_deg}° | 车速 {speed_mps} m/s',
-            input_conditions={
-                'vehicle_type': vehicle_type,
-                'pole_angle_deg': pole_angle_deg,
-                'speed_mps': speed_mps
-            },
-            entries=entries,
-            winners=winners,
-            insights=insights
+    def compare_eras(self, ancient_types=None, modern_types=None,
+                     pole_angle_deg=20.0, speed_mps=5.0,
+                     friction_coeff=0.7, road_type='ancient_post_road',
+                     cargo=None):
+        return self._era_cmp.compare_eras(
+            ancient_types, modern_types, pole_angle_deg, speed_mps,
+            friction_coeff, road_type, cargo
         )
 
-    def _find_road_winners(self, entries: List[Dict]) -> Dict[str, str]:
-        winners = {}
-        if not entries:
-            return winners
-        categories = [
-            ('最高摩擦系数', 'friction_coeff', False),
-            ('最低滚动阻力', 'rolling_resistance', True),
-            ('最低侧翻风险', 'rollover_risk', True),
-            ('最高稳定性指数', 'stability_index', False),
-            ('最高安全车速', 'max_safe_speed', False),
-            ('最小有效转弯半径', 'turning_radius_effective', True),
-            ('最低牵引力需求', 'traction_force_required', True),
-            ('最低颠簸振动', 'vibration_level', True)
-        ]
-        for name, key, lower_is_better in categories:
-            sorted_entries = sorted(
-                entries,
-                key=lambda e: e.get(key, float('inf') if lower_is_better else 0),
-                reverse=not lower_is_better
-            )
-            winners[name] = sorted_entries[0]['road_name']
-        return winners
-
-    def _generate_road_insights(self, entries: List[Dict], vehicle_type: str,
-                                 pole_deg: float, speed: float) -> List[str]:
-        insights = []
-        if not entries:
-            return insights
-
-        best = min(entries, key=lambda e: e.get('rollover_risk', 100))
-        worst = max(entries, key=lambda e: e.get('rollover_risk', 0))
-        insights.append(
-            f"最佳路面【{best['road_name']}】侧翻风险仅{best['rollover_risk']:.0f}%，"
-            f"最差路面【{worst['road_name']}】高达{worst['rollover_risk']:.0f}%，"
-            f"差距{worst['rollover_risk'] - best['rollover_risk']:.0f}个百分点。"
+    def compare_road_surfaces(self, vehicle_type, pole_angle_deg,
+                              speed_mps, road_types, cargo=None):
+        return self._road_sim.compare_roads(
+            vehicle_type, pole_angle_deg, speed_mps, road_types, cargo
         )
-
-        if worst.get('rollover_risk', 0) > 70 and speed > 3:
-            insights.append(
-                f"⚠ 在【{worst['road_name']}】上以{speed}m/s行驶存在严重危险，"
-                f"建议将车速降至{max(1, int(worst.get('max_safe_speed', 2)))}m/s以下。"
-            )
-
-        pavement = [e for e in entries if '铺装' in e.get('category', '')]
-        unpaved = [e for e in entries if '非铺装' in e.get('category', '')]
-        if pavement and unpaved:
-            avg_stab_p = sum(e['stability_index'] for e in pavement) / len(pavement)
-            avg_stab_u = sum(e['stability_index'] for e in unpaved) / len(unpaved)
-            insights.append(
-                f"铺装路面平均稳定性指数({avg_stab_p:.2f})明显优于非铺装路面({avg_stab_u:.2f})，"
-                f"秦汉驿道系统的建设对运输效率提升显著。"
-            )
-
-        mud = [e for e in entries if '泥泞' in e.get('road_name', '')]
-        if mud:
-            m = mud[0]
-            insights.append(
-                f"泥泞路牵引力需求达{m['traction_force_required']:.0f}N，"
-                f"约为干燥路面的{m['traction_force_required'] / max(1, best.get('traction_force_required', 100)):.1f}倍，"
-                f"需要牲畜数量成倍增加。"
-            )
-
-        stone = [e for e in entries if '石板' in e.get('road_name', '')]
-        if stone:
-            s = stone[0]
-            insights.append(
-                f"古代石板路振动等级{s['vibration_level']:.1f}，"
-                f"对易碎货物和乘客舒适度影响较大，但摩擦系数优于土路。"
-            )
-
-        if not insights or len(insights) < 2:
-            insights.append("增加车速或辕杆角度可放大各路面间的性能差异。")
-        return insights
 
 
 class ForceFeedbackModel:
@@ -867,192 +648,27 @@ class ForceFeedbackModel:
 
 
 class VirtualDriveEngine:
+    """
+    [重构后 v2.0] 虚拟驾驶引擎薄封装
+    完整逻辑已迁移到 vr_chariot.VRChariotEngine
+    - 保持原有 step / reset_session API 100% 不变，确保后向兼容
+    """
+
     def __init__(self):
-        self._steering = MultiVehicleSteeringModel()
-        self._road = RoadSurfaceModel()
-        self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._ffb: ForceFeedbackModel = ForceFeedbackModel()
+        from .vr_chariot import VRChariotEngine
+        self._inner = VRChariotEngine()
+        self._steering = self._inner._steering
+        self._road = self._inner._road
+        self._ffb = self._inner._ffb
+        self._sessions = self._inner._sessions
 
-    def _get_or_create_session(self, session_id: str) -> Dict[str, Any]:
-        if session_id not in self._sessions:
-            self._sessions[session_id] = {
-                'x': 0.0,
-                'y': 0.0,
-                'heading': 0.0,
-                'speed': 0.0,
-                'wheel_rotations': [0.0, 0.0, 0.0, 0.0],
-                'last_update': time.time(),
-                'cargo_shift_lateral': 0.0,
-                'cargo_shift_vertical': 0.0,
-                'cargo_velocity_lat': 0.0,
-                'cargo_velocity_ver': 0.0
-            }
-        return self._sessions[session_id]
-
-    def step(self, session_id: str, vehicle_type: str, road_type: str,
-             pole_angle_deg: float, throttle: float, brake: float,
-             cargo: CargoConfig = None, dt: float = 0.05) -> VirtualDriveState:
-        session = self._get_or_create_session(session_id)
-        config = self._steering.get_vehicle_config(vehicle_type)
-        if not config:
-            config = self._steering.get_vehicle_config('chariot_double')
-        cfg = self._road.get_surface_config(road_type)
-        mu = (cfg['friction_min'] + cfg['friction_max']) / 2
-        roll_resist = cfg.get('rolling_resistance', 0.05)
-        slip_factor = cfg.get('slip_factor', 1.0)
-        bump_amp = cfg.get('bump_amplitude_m', 0.02)
-
-        accel_target = throttle * 2.0
-        brake_force = brake * 5.0
-        rolling_force = roll_resist * 9.81
-        session['speed'] += (accel_target - rolling_force - brake_force) * dt
-        session['speed'] = max(0.0, min(session['speed'], config.max_speed_mps))
-
-        speed = session['speed']
-        steering = self._steering.compute_steering(
-            vehicle_type, pole_angle_deg, speed, mu, road_type
-        )
-        if steering and steering['turning_radius'] != float('inf') and abs(steering['turning_radius']) > 0.5:
-            R_eff = steering['turning_radius'] * slip_factor
-            yaw_rate = speed / R_eff
-        else:
-            R_eff = float('inf')
-            yaw_rate = 0.0
-
-        session['heading'] += yaw_rate * dt
-        dx = speed * math.cos(session['heading']) * dt
-        dy = speed * math.sin(session['heading']) * dt
-        session['x'] += dx
-        session['y'] += dy
-
-        inner_wheel_deg = steering['inner_wheel_angle'] if steering else 0.0
-        outer_wheel_deg = steering['outer_wheel_angle'] if steering else 0.0
-        lateral_accel = speed * yaw_rate if R_eff != float('inf') else 0.0
-
-        m = config.dynamics.mass + (cargo.mass if cargo else 0)
-        roll_stiff = config.dynamics.roll_stiffness
-        damping = config.dynamics.damping_ratio * 2 * math.sqrt(m * roll_stiff)
-        h_cg = config.dynamics.cg_height + (cargo.offset_height if cargo else 0)
-        roll_moment = m * abs(lateral_accel) * h_cg
-        roll_angle_rad = roll_moment / (roll_stiff + 1e-6)
-        roll_angle_rad = min(math.radians(40), roll_angle_rad)
-        if yaw_rate < 0:
-            roll_angle_rad = -roll_angle_rad
-        roll_rate = (roll_angle_rad - session.get('prev_roll', 0)) / dt
-        session['prev_roll'] = roll_angle_rad
-
-        if cargo and cargo.mass > 0 and cargo.shift_dynamics:
-            F_lat = cargo.mass * lateral_accel + random.uniform(-0.5, 0.5) * bump_amp * 10
-            a_lat = (F_lat - cargo.shift_stiffness * session['cargo_shift_lateral']
-                     - cargo.shift_damping * session['cargo_velocity_lat']) / cargo.mass
-            session['cargo_velocity_lat'] += a_lat * dt
-            session['cargo_shift_lateral'] += session['cargo_velocity_lat'] * dt
-            session['cargo_shift_lateral'] = max(-0.3, min(0.3, session['cargo_shift_lateral']))
-
-            F_ver = -cargo.mass * lateral_accel * 0.3 + random.uniform(-0.3, 0.3) * bump_amp * 8
-            a_ver = (F_ver - cargo.shift_stiffness * session['cargo_shift_vertical']
-                     - cargo.shift_damping * session['cargo_velocity_ver']) / cargo.mass
-            session['cargo_velocity_ver'] += a_ver * dt
-            session['cargo_shift_vertical'] += session['cargo_velocity_ver'] * dt
-            session['cargo_shift_vertical'] = max(-0.1, min(0.1, session['cargo_shift_vertical']))
-
-        effective_cg_lat = config.dynamics.cg_lateral
-        effective_cg_h = config.dynamics.cg_height
-        if cargo and cargo.mass > 0:
-            total_mass = config.dynamics.mass + cargo.mass
-            y_cargo = cargo.offset_lateral + session['cargo_shift_lateral']
-            effective_cg_lat = (config.dynamics.mass * config.dynamics.cg_lateral + cargo.mass * y_cargo) / total_mass
-            h_cargo = config.dynamics.cg_height + cargo.offset_height + session['cargo_shift_vertical']
-            effective_cg_h = (config.dynamics.mass * config.dynamics.cg_height + cargo.mass * h_cargo) / total_mass
-
-        ssf = config.dynamics.track_width / (2 * max(0.01, effective_cg_h))
-        roll_threshold = 9.81 * config.dynamics.track_width / (2 * max(0.01, effective_cg_h - config.dynamics.roll_center_height))
-        a_y_norm = abs(lateral_accel) / 9.81
-        risk_ratio = a_y_norm / max(0.1, roll_threshold / 9.81)
-        cg_factor = 1.0 + 1.5 * abs(effective_cg_lat) / max(0.01, config.dynamics.track_width)
-        mass_factor = 1.0
-        if cargo and cargo.mass > 0:
-            mass_factor = 1.0 + 0.1 * cargo.mass / config.dynamics.mass
-        rollover_risk_pct = min(100, risk_ratio * cg_factor * mass_factor * 100)
-
-        slip_ratio = 0.0
-        if mu > 0 and abs(lateral_accel) > mu * 9.81 * 0.7:
-            slip_ratio = min(1.0, (abs(lateral_accel) - mu * 9.81 * 0.7) / (mu * 9.81 * 0.3 + 0.01))
-
-        wheel_r = config.geometry.wheel_radius
-        if wheel_r > 0 and speed > 0:
-            omega = speed / wheel_r
-            for i in range(4):
-                session['wheel_rotations'][i] += omega * dt
-                if i < 2 and R_eff != float('inf') and abs(R_eff) > 0.5:
-                    track = config.dynamics.track_width
-                    r_wheel = R_eff - (-1 if i in (0, 2) else 1) * track / 2
-                    session['wheel_rotations'][i] = session['wheel_rotations'][0] * r_wheel / R_eff if R_eff != 0 else 0
-
-        is_tipping = rollover_risk_pct > 85
-        is_stuck = mu < 0.25 and throttle > 0.5 and session['speed'] < 0.5
-        alert_msg = ""
-        if rollover_risk_pct > 70:
-            alert_msg = "⚠ 侧翻风险高！请减速或回正方向"
-        elif is_stuck:
-            alert_msg = "⚠ 车轮打滑陷入泥地，请减少牵引力"
-        elif slip_ratio > 0.5:
-            alert_msg = "⚠ 严重侧滑，请小心操控"
-        elif mu < 0.35:
-            alert_msg = "路面湿滑，注意安全"
-
-        stability_idx = max(0.0, 1.0 - rollover_risk_pct / 100.0)
-        critical_v = math.sqrt(max(0.1, roll_threshold * R_eff)) if R_eff != float('inf') and R_eff > 0 else config.max_speed_mps
-
-        road_effect = self._road.compute_effects(road_type, config.dynamics, mu)
-        wheel_avg_rad = math.radians((inner_wheel_deg + outer_wheel_deg) / 2.0)
-        ffb_result = self._ffb.compute(
-            vehicle_dynamics=config.dynamics,
-            road_cfg=cfg,
-            pole_angle_deg=pole_angle_deg,
-            wheel_angle_avg_rad=wheel_avg_rad,
-            speed_mps=speed,
-            lateral_accel_mps2=lateral_accel,
-            slip_ratio=slip_ratio,
-            mu=mu,
-            cornering_stiff_front_N_per_rad=road_effect.effective_cornering_stiffness_front,
-            dt=dt
+    def step(self, session_id, vehicle_type, road_type,
+             pole_angle_deg, throttle, brake,
+             cargo=None, dt=0.05):
+        return self._inner.step(
+            session_id, vehicle_type, road_type,
+            pole_angle_deg, throttle, brake, cargo, dt
         )
 
-        return VirtualDriveState(
-            session_id=session_id,
-            vehicle_type=vehicle_type,
-            road_type=road_type,
-            x=session['x'],
-            y=session['y'],
-            heading=session['heading'],
-            speed=session['speed'],
-            pole_angle=pole_angle_deg,
-            inner_wheel_angle=inner_wheel_deg,
-            outer_wheel_angle=outer_wheel_deg,
-            turning_radius=R_eff,
-            roll_angle=math.degrees(roll_angle_rad),
-            roll_rate=math.degrees(roll_rate),
-            yaw_rate=math.degrees(yaw_rate),
-            lateral_acceleration=lateral_accel,
-            rollover_risk=rollover_risk_pct,
-            stability_index=stability_idx,
-            effective_friction=mu,
-            slip_ratio=slip_ratio,
-            wheel_rotation=list(session['wheel_rotations']),
-            cargo_shift_lateral=session['cargo_shift_lateral'],
-            cargo_shift_vertical=session['cargo_shift_vertical'],
-            ffb_total_torque=ffb_result.get('ffb_total_torque', 0.0),
-            ffb_aligning_torque=ffb_result.get('ffb_aligning_torque', 0.0),
-            ffb_damping_torque=ffb_result.get('ffb_damping_torque', 0.0),
-            ffb_road_feel_torque=ffb_result.get('ffb_road_feel_torque', 0.0),
-            ffb_friction_torque=ffb_result.get('ffb_friction_torque', 0.0),
-            ffb_intensity=ffb_result.get('ffb_intensity', 0.0),
-            alert_message=alert_msg,
-            is_tipping=is_tipping,
-            is_stuck=is_stuck
-        )
-
-    def reset_session(self, session_id: str):
-        if session_id in self._sessions:
-            del self._sessions[session_id]
+    def reset_session(self, session_id):
+        self._inner.reset_session(session_id)
