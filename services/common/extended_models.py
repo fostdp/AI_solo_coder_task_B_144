@@ -760,11 +760,118 @@ class ComparisonAnalyzer:
         return insights
 
 
+class ForceFeedbackModel:
+    """
+    力反馈方向盘模型 v2.0
+    基于SAE J2181和ISO 11663标准
+    4项分量：回正力矩 + 阻尼力矩 + 路感振动 + 库仑摩擦
+    """
+    def __init__(self):
+        self._prev_pole_angle_rad: float = 0.0
+        self._prev_time: float = time.time()
+        self._road_feel_filter: float = 0.0
+        self._caster_angle_rad = math.radians(3.5)
+        self._mechanical_trail_m = 0.025
+        self._pneumatic_trail_coeff = 0.45
+        self._steering_ratio = 16.5
+
+    def compute(self, vehicle_dynamics: VehicleDynamicsParams,
+                road_cfg: Dict[str, Any],
+                pole_angle_deg: float,
+                wheel_angle_avg_rad: float,
+                speed_mps: float,
+                lateral_accel_mps2: float,
+                slip_ratio: float,
+                mu: float,
+                cornering_stiff_front_N_per_rad: float,
+                dt: float = 0.05) -> Dict[str, float]:
+
+        pole_rad = math.radians(pole_angle_deg)
+        now = time.time()
+        d_angle = pole_rad - self._prev_pole_angle_rad
+        dt_actual = max(0.001, now - self._prev_time)
+        steer_angvel_radps = d_angle / dt_actual
+        self._prev_pole_angle_rad = pole_rad
+        self._prev_time = now
+
+        if abs(wheel_angle_avg_rad) > 0.001 and speed_mps > 0.1:
+            slip_angle_front_rad = wheel_angle_avg_rad - math.atan(
+                (vehicle_dynamics.wheelbase * 0.5 * (lateral_accel_mps2 / (9.81 * vehicle_dynamics.cg_height + 1e-6)) + 0)
+                / max(0.1, speed_mps)
+            )
+        else:
+            slip_angle_front_rad = wheel_angle_avg_rad
+        slip_angle_front_rad = max(-0.3, min(0.3, slip_angle_front_rad))
+
+        lateral_force_front_N = cornering_stiff_front_N_per_rad * slip_angle_front_rad * (1.0 - 0.5 * slip_ratio)
+        pneumatic_trail_m = self._pneumatic_trail_coeff * vehicle_dynamics.wheel_radius * max(0.0, 1.0 - abs(slip_angle_front_rad) / 0.3)
+        total_trail_m = (self._mechanical_trail_m
+                         + vehicle_dynamics.cg_height * math.tan(self._caster_angle_rad)
+                         + pneumatic_trail_m)
+        aligning_torque_Nm = -lateral_force_front_N * total_trail_m * max(0.1, mu / 0.85)
+
+        steering_viscosity_Nm_per_radps = 0.8
+        damping_torque_Nm = -steering_viscosity_Nm_per_radps * steer_angvel_radps * max(0.1, speed_mps / 10.0)
+
+        mu_clamped = max(0.09, min(0.95, mu))
+        friction_static_Nm = 1.2 + 2.8 * (1.0 - (mu_clamped - 0.09) / 0.86)
+        if abs(steer_angvel_radps) > 0.001:
+            friction_torque_Nm = -friction_static_Nm * math.tanh(steer_angvel_radps / 0.02)
+        else:
+            friction_torque_Nm = -friction_static_Nm * 0.5 * math.tanh(pole_rad / 0.005) if abs(pole_rad) < 0.05 else 0.0
+
+        bump = road_cfg.get('bump_amplitude_m', 0.02)
+        irregular = road_cfg.get('irregularity', 0.0)
+        f_low = 10.0
+        f_high = 55.0
+        omega = 2.0 * math.pi * random.uniform(f_low, f_high)
+        amplitude_gain = (bump * 5000.0 + irregular * 3.5) * min(1.0, speed_mps / 5.0)
+        white_noise = random.uniform(-1.0, 1.0)
+        road_feel_raw_Nm = amplitude_gain * white_noise * math.sin(omega * now)
+        alpha = 0.3
+        self._road_feel_filter = alpha * road_feel_raw_Nm + (1.0 - alpha) * self._road_feel_filter
+        road_feel_Nm = self._road_feel_filter
+
+        eps = 0.02
+        if speed_mps < 0.5 and abs(pole_rad) < 0.02:
+            total = 0.0
+            aligning_torque_Nm = 0.0
+            damping_torque_Nm = 0.0
+            friction_torque_Nm = 0.0
+            road_feel_Nm = 0.0
+        else:
+            total = aligning_torque_Nm + damping_torque_Nm + road_feel_Nm + friction_torque_Nm
+
+        max_allowable_Nm = 8.0
+        if abs(total) > max_allowable_Nm:
+            scale = max_allowable_Nm / abs(total)
+            aligning_torque_Nm *= scale
+            damping_torque_Nm *= scale
+            road_feel_Nm *= scale
+            friction_torque_Nm *= scale
+            total *= scale
+
+        intensity = max(0.0, min(1.0, abs(total) / max_allowable_Nm))
+
+        return {
+            'ffb_total_torque': total,
+            'ffb_aligning_torque': aligning_torque_Nm,
+            'ffb_damping_torque': damping_torque_Nm,
+            'ffb_road_feel_torque': road_feel_Nm,
+            'ffb_friction_torque': friction_torque_Nm,
+            'ffb_intensity': intensity,
+            '_debug_slip_angle_deg': math.degrees(slip_angle_front_rad),
+            '_debug_lateral_force_N': lateral_force_front_N,
+            '_debug_total_trail_m': total_trail_m
+        }
+
+
 class VirtualDriveEngine:
     def __init__(self):
         self._steering = MultiVehicleSteeringModel()
         self._road = RoadSurfaceModel()
         self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._ffb: ForceFeedbackModel = ForceFeedbackModel()
 
     def _get_or_create_session(self, session_id: str) -> Dict[str, Any]:
         if session_id not in self._sessions:
@@ -897,6 +1004,21 @@ class VirtualDriveEngine:
         stability_idx = max(0.0, 1.0 - rollover_risk_pct / 100.0)
         critical_v = math.sqrt(max(0.1, roll_threshold * R_eff)) if R_eff != float('inf') and R_eff > 0 else config.max_speed_mps
 
+        road_effect = self._road.compute_effects(road_type, config.dynamics, mu)
+        wheel_avg_rad = math.radians((inner_wheel_deg + outer_wheel_deg) / 2.0)
+        ffb_result = self._ffb.compute(
+            vehicle_dynamics=config.dynamics,
+            road_cfg=cfg,
+            pole_angle_deg=pole_angle_deg,
+            wheel_angle_avg_rad=wheel_avg_rad,
+            speed_mps=speed,
+            lateral_accel_mps2=lateral_accel,
+            slip_ratio=slip_ratio,
+            mu=mu,
+            cornering_stiff_front_N_per_rad=road_effect.effective_cornering_stiffness_front,
+            dt=dt
+        )
+
         return VirtualDriveState(
             session_id=session_id,
             vehicle_type=vehicle_type,
@@ -920,6 +1042,12 @@ class VirtualDriveEngine:
             wheel_rotation=list(session['wheel_rotations']),
             cargo_shift_lateral=session['cargo_shift_lateral'],
             cargo_shift_vertical=session['cargo_shift_vertical'],
+            ffb_total_torque=ffb_result.get('ffb_total_torque', 0.0),
+            ffb_aligning_torque=ffb_result.get('ffb_aligning_torque', 0.0),
+            ffb_damping_torque=ffb_result.get('ffb_damping_torque', 0.0),
+            ffb_road_feel_torque=ffb_result.get('ffb_road_feel_torque', 0.0),
+            ffb_friction_torque=ffb_result.get('ffb_friction_torque', 0.0),
+            ffb_intensity=ffb_result.get('ffb_intensity', 0.0),
             alert_message=alert_msg,
             is_tipping=is_tipping,
             is_stuck=is_stuck

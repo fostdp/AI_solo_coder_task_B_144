@@ -342,6 +342,12 @@ class VirtualDriveState:
     wheel_rotation: List[float]
     cargo_shift_lateral: float
     cargo_shift_vertical: float
+    ffb_total_torque: float = 0.0
+    ffb_aligning_torque: float = 0.0
+    ffb_damping_torque: float = 0.0
+    ffb_road_feel_torque: float = 0.0
+    ffb_friction_torque: float = 0.0
+    ffb_intensity: float = 0.0
     alert_message: str = ""
     is_tipping: bool = False
     is_stuck: bool = False
